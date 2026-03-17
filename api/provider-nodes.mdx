@@ -1,0 +1,225 @@
+---
+title: "Provider node endpoints"
+description: "Endpoints for OAHL nodes to register with the cloud registry and exchange commands."
+---
+
+Provider endpoints are used by hardware nodes — not by agent clients. They require a **provider API key** bearer token. These endpoints handle node registration, command polling (HTTP fallback), and result submission (HTTP fallback).
+
+<Note>
+  If you are building an agent integration, you do not need these endpoints. They are called automatically by the OAHL node process.
+</Note>
+
+---
+
+## `POST /v1/provider/nodes/register`
+
+Registers or refreshes a hardware node's presence in the cloud registry. Nodes call this on startup and periodically (every 15 seconds by default) as a heartbeat. Node records expire after **300 seconds** without a refresh.
+
+### Authentication
+
+Requires a **provider API key** as a bearer token.
+
+### Request body
+
+<ParamField body="node_id" type="string" required>
+  Stable identifier for this node. Must be unique within the registry.
+</ParamField>
+
+<ParamField body="owner_id" type="string">
+  Identifier of the hardware owner.
+</ParamField>
+
+<ParamField body="owner_email" type="string">
+  Email address of the hardware owner (format: email).
+</ParamField>
+
+<ParamField body="provider" type="object">
+  Provider metadata.
+
+  <Expandable title="provider fields">
+    <ParamField body="name" type="string">
+      Human-readable name for this hardware provider.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField body="devices" type="DeviceDescriptor[]">
+  Array of devices available on this node. Each item is a [DeviceDescriptor](/api/schemas/device-descriptor) object.
+</ParamField>
+
+### Example request
+
+```bash
+curl -X POST https://oahl.onrender.com/v1/provider/nodes/register \
+  -H "Authorization: Bearer oahl_provider_xyz789..." \
+  -H "Content-Type: application/json" \
+  -d '{
+    "node_id": "node-abc123",
+    "owner_id": "user-001",
+    "owner_email": "owner@example.com",
+    "provider": { "name": "acme-lab" },
+    "devices": [
+      {
+        "id": "cam-01",
+        "type": "camera",
+        "name": "USB Camera (Front)",
+        "node_id": "node-abc123",
+        "status": "available",
+        "capabilities": [
+          {
+            "name": "camera.capture",
+            "description": "Capture a still image.",
+            "schema": { "type": "object", "properties": {} }
+          }
+        ]
+      }
+    ]
+  }'
+```
+
+### Response
+
+**`200 OK`**
+
+```json
+{ "status": "success" }
+```
+
+**`400 Bad Request`** — `node_id` is missing.
+
+```json
+{ "error": "node_id is required" }
+```
+
+<Tip>
+  The OAHL node process manages registration and heartbeating automatically. You only need to call this endpoint directly when building a custom node implementation.
+</Tip>
+
+---
+
+## `GET /v1/provider/nodes/{id}/poll`
+
+Long-polls for a pending command queued for this node. Blocks for up to **30 seconds**. Use this as a fallback when the WebSocket relay (`/ws/provider`) is unavailable.
+
+### Authentication
+
+Requires a **provider API key** as a bearer token.
+
+### Path parameter
+
+<ParamField path="id" type="string" required>
+  The `node_id` registered by this node.
+</ParamField>
+
+### Example request
+
+```bash
+curl 'https://oahl.onrender.com/v1/provider/nodes/node-abc123/poll' \
+  -H "Authorization: Bearer oahl_provider_xyz789..."
+```
+
+### Response
+
+**`200 OK`** — A command is available.
+
+```json
+{
+  "type": "command",
+  "payload": {
+    "requestId": "cmd-3a7f92bc-1234",
+    "deviceId": "cam-01",
+    "capability": "camera.capture",
+    "params": { "resolution": "1080p" },
+    "dispatchedAt": "2026-03-17T12:00:00.000Z"
+  }
+}
+```
+
+For a batch command:
+
+```json
+{
+  "type": "command-batch",
+  "payload": {
+    "requestId": "cmd-batch-9f1c3d",
+    "deviceId": "arm-01",
+    "commands": [
+      { "capability": "arm.move", "params": { "x": 10 } },
+      { "capability": "arm.close_gripper", "params": {} }
+    ],
+    "dispatchedAt": "2026-03-17T12:01:00.000Z"
+  }
+}
+```
+
+**`204 No Content`** — The poll timeout elapsed with no commands pending. The node should immediately poll again.
+
+<ResponseField name="type" type="string">
+  Command type: `command` for a single capability execution, or `command-batch` for a batch.
+</ResponseField>
+
+<ResponseField name="payload" type="object">
+  The command payload. Shape varies by `type`.
+</ResponseField>
+
+---
+
+## `POST /v1/provider/nodes/results`
+
+Submits an execution result back to the cloud after the node processes a command. Use this as a fallback when the WebSocket relay is unavailable.
+
+If the cloud still has an open WebSocket promise for the `requestId`, it resolves immediately (`mode: websocket`). Otherwise the result is stored in Redis for the waiting agent to collect (`mode: redis`).
+
+### Authentication
+
+Requires a **provider API key** as a bearer token.
+
+### Request body
+
+<ParamField body="requestId" type="string" required>
+  The `requestId` from the command payload received via poll or WebSocket.
+</ParamField>
+
+<ParamField body="result" type="ExecutionResult" required>
+  The [ExecutionResult](/api/schemas/execution-result) envelope produced by the adapter.
+</ParamField>
+
+### Example request
+
+```bash
+curl -X POST https://oahl.onrender.com/v1/provider/nodes/results \
+  -H "Authorization: Bearer oahl_provider_xyz789..." \
+  -H "Content-Type: application/json" \
+  -d '{
+    "requestId": "cmd-3a7f92bc-1234",
+    "result": {
+      "schema_version": "1.0",
+      "operation_id": "cmd-3a7f92bc-1234",
+      "status": "success",
+      "completion": { "done": true, "state": "completed" },
+      "capability": "camera.capture",
+      "device_id": "cam-01",
+      "timestamp": "2026-03-17T12:00:01.000Z",
+      "data": { "image_url": "https://storage.example.com/img-001.jpeg" }
+    }
+  }'
+```
+
+### Response
+
+**`200 OK`**
+
+```json
+{
+  "status": "success",
+  "mode": "websocket"
+}
+```
+
+<ResponseField name="status" type="string">
+  Always `"success"` when the result was accepted.
+</ResponseField>
+
+<ResponseField name="mode" type="string">
+  How the result was delivered: `websocket` (resolved an open WebSocket promise) or `redis` (stored for polling retrieval).
+</ResponseField>

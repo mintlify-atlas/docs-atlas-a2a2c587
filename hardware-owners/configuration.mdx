@@ -1,0 +1,317 @@
+---
+title: "Configuration reference"
+description: "Complete reference for oahl-config.json — the file that defines your node's identity, plugins, and devices."
+---
+
+The `oahl-config.json` file is the single source of truth for your OAHL node. It defines the node's identity, which adapter plugins to load, what devices are exposed, and the access and safety policies for each device.
+
+## Complete example
+
+```json oahl-config.json
+{
+  "node_id": "my-laptop-01",
+  "cloud_url": "https://oahl.onrender.com",
+  "provider_api_key": "123456",
+  "provider": {
+    "name": "My Personal Test Node",
+    "owner_id": "user_abc123"
+  },
+  "plugins": [
+    "@oahl/adapter-mock",
+    "@oahl/adapter-usb-camera",
+    "@oahl/adapter-rtl-sdr"
+  ],
+  "devices": [
+    {
+      "id": "cam-01",
+      "type": "camera",
+      "adapter": "usb-camera",
+      "capabilities": ["camera.capture", "camera.stream"],
+      "local_path": "/dev/video0",
+      "access_policy": {
+        "visibility": "shared",
+        "allowed_agents": ["agent_xyz"],
+        "allowed_orgs": ["org_research"],
+        "denied_agents": []
+      },
+      "policy": {
+        "public": false,
+        "max_session_minutes": 20
+      }
+    },
+    {
+      "id": "sdr-01",
+      "type": "radio",
+      "adapter": "rtl-sdr",
+      "capabilities": ["radio.scan", "radio.measure_power"],
+      "access_policy": {
+        "visibility": "private"
+      },
+      "policy": {
+        "public": false,
+        "max_session_minutes": 10
+      }
+    }
+  ]
+}
+```
+
+## Top-level fields
+
+<ParamField path="node_id" type="string" required>
+  A unique identifier for this node. Used in Cloud Registry registration and logs. Choose something descriptive and stable — changing it de-registers the old entry.
+
+  ```json
+  "node_id": "gh-lab-01"
+  ```
+</ParamField>
+
+<ParamField path="cloud_url" type="string">
+  The URL of the OAHL Cloud Registry. When set, the node registers on startup and sends a heartbeat every 15 seconds.
+
+  Set to an empty string or omit entirely to run in offline/local-only mode.
+
+  ```json
+  "cloud_url": "https://oahl.onrender.com"
+  ```
+</ParamField>
+
+<ParamField path="provider_api_key" type="string">
+  Your API key from the OAHL Developer Portal. Required for cloud registration. The node sends this key in registration and heartbeat requests.
+
+  ```json
+  "provider_api_key": "your-api-key-here"
+  ```
+
+  <Warning>
+    Do not commit this value to version control. Use an environment variable or a secrets manager in production.
+  </Warning>
+</ParamField>
+
+<ParamField path="owner_id" type="string">
+  Optional top-level owner identifier. If set, it is also written to `provider.owner_id`. Used to associate the node with a specific user account.
+</ParamField>
+
+<ParamField path="plugins" type="string[]" required>
+  An array of npm package names for the hardware adapter plugins to load. Each plugin must be installed (`npm install` or `oahl install`) before starting the node.
+
+  ```json
+  "plugins": [
+    "@oahl/adapter-mock",
+    "@oahl/adapter-usb-camera"
+  ]
+  ```
+
+  Install a plugin and add it to the config in one command:
+
+  ```bash
+  oahl install @oahl/adapter-usb-camera
+  ```
+</ParamField>
+
+## `provider` object
+
+Describes the hardware provider (you or your lab).
+
+<ParamField path="provider.name" type="string">
+  A human-readable name for your provider or lab, shown in the Cloud Registry.
+
+  ```json
+  "provider": {
+    "name": "Accra Test Lab"
+  }
+  ```
+</ParamField>
+
+<ParamField path="provider.owner_id" type="string">
+  Your user or organisation ID from the Developer Portal. Populated automatically from the top-level `owner_id` field when you run `oahl init` or `oahl tui`.
+</ParamField>
+
+## `devices` array
+
+Each entry in the `devices` array declares one hardware device exposed by the node.
+
+<ParamField path="devices[].id" type="string" required>
+  A unique identifier for the device within this node. Referenced by agents when requesting a session.
+
+  ```json
+  "id": "cam-01"
+  ```
+</ParamField>
+
+<ParamField path="devices[].type" type="string" required>
+  The device category. Common values: `camera`, `radio`, `sensor`, `mobile`, `serial-device`, `custom`.
+
+  ```json
+  "type": "camera"
+  ```
+</ParamField>
+
+<ParamField path="devices[].adapter" type="string">
+  The adapter name to use for this device. Matches the short name exported by the plugin (e.g. `usb-camera` for `@oahl/adapter-usb-camera`).
+
+  ```json
+  "adapter": "usb-camera"
+  ```
+</ParamField>
+
+<ParamField path="devices[].capabilities" type="string[]">
+  The list of capability names this device exposes. Agents can only invoke capabilities listed here.
+
+  ```json
+  "capabilities": ["camera.capture", "camera.stream"]
+  ```
+
+  Common capability names by device type:
+
+  | Device type | Capabilities |
+  |---|---|
+  | `camera` | `camera.capture`, `camera.stream` |
+  | `radio` | `radio.scan`, `radio.measure_power` |
+  | `mobile` | `system.info`, `screen.screenshot`, `system.shell` |
+  | `serial-device` | `device.read`, `device.write` |
+</ParamField>
+
+<ParamField path="devices[].local_path" type="string">
+  The host OS path to the hardware device. Used by adapters that need to open a device file directly (e.g. `/dev/video0` for USB cameras, `/dev/ttyACM0` for serial devices).
+
+  ```json
+  "local_path": "/dev/video0"
+  ```
+
+  <Note>
+    When running inside Docker, pass this path through with the `--device` flag. See [Running with Docker](/hardware-owners/docker).
+  </Note>
+</ParamField>
+
+<ParamField path="devices[].owner_id" type="string">
+  Optional per-device owner ID. Overrides the top-level `owner_id` for this specific device.
+</ParamField>
+
+## `access_policy` object
+
+Controls which agents and organisations can discover and use each device.
+
+<ParamField path="devices[].access_policy.visibility" type="string" default="public">
+  Controls broad discoverability:
+
+  | Value | Behaviour |
+  |---|---|
+  | `public` | Any agent can discover and request access |
+  | `shared` | Only agents or orgs on the allow-list can access |
+  | `private` | Only the owner (and explicit allow-list) can access |
+
+  ```json
+  "access_policy": {
+    "visibility": "shared"
+  }
+  ```
+</ParamField>
+
+<ParamField path="devices[].access_policy.allowed_agents" type="string[]">
+  Agent IDs that are explicitly allowed to use this device. Relevant when `visibility` is `shared` or `private`.
+
+  ```json
+  "allowed_agents": ["agent_xyz", "agent_abc"]
+  ```
+</ParamField>
+
+<ParamField path="devices[].access_policy.allowed_orgs" type="string[]">
+  Organisation IDs whose agents are allowed to use this device.
+
+  ```json
+  "allowed_orgs": ["org_research", "org_university"]
+  ```
+</ParamField>
+
+<ParamField path="devices[].access_policy.denied_agents" type="string[]">
+  Agent IDs that are explicitly blocked, regardless of other allow-list entries.
+
+  ```json
+  "denied_agents": ["agent_bad_actor"]
+  ```
+</ParamField>
+
+## `policy` object
+
+Defines runtime safety limits for a device session.
+
+<ParamField path="devices[].policy.public" type="boolean" default="false">
+  Shorthand for whether the device is publicly accessible. Kept in sync with `access_policy.visibility` by the TUI and `oahl init`.
+
+  ```json
+  "policy": {
+    "public": true
+  }
+  ```
+</ParamField>
+
+<ParamField path="devices[].policy.max_session_minutes" type="number" default="30">
+  Maximum number of minutes an agent can hold an exclusive session on this device. After this duration, the session is forcibly terminated.
+
+  ```json
+  "policy": {
+    "max_session_minutes": 20
+  }
+  ```
+
+  <Tip>
+    Use short session limits (5–15 minutes) for shared public devices to avoid a single agent monopolising the hardware.
+  </Tip>
+</ParamField>
+
+## Offline / local-only mode
+
+To run a fully private node that never contacts the Cloud Registry, set `cloud_url` to an empty string or remove it entirely:
+
+```json oahl-config.json (offline)
+{
+  "node_id": "my-local-lab",
+  "cloud_url": "",
+  "devices": [
+    {
+      "id": "cam-01",
+      "type": "camera",
+      "adapter": "usb-camera",
+      "capabilities": ["camera.capture"]
+    }
+  ]
+}
+```
+
+The local Express server still starts on `http://localhost:3000` and is accessible to agents on your LAN, but no device information is broadcast to the internet.
+
+## `server` object (advanced)
+
+<ParamField path="server.port" type="number" default="3000">
+  Port the local HTTP server listens on. Can also be overridden at start time with `oahl start --port <number>` or the `PORT` environment variable.
+</ParamField>
+
+<ParamField path="server.host" type="string" default="0.0.0.0">
+  Network interface to bind to. Use `127.0.0.1` to restrict access to localhost only.
+</ParamField>
+
+## `baseline_capability` object (advanced)
+
+Enables a fallback `hardware.baseline` capability that generates AI-guided hardware workflows when no direct capability matches the agent's intent.
+
+<ParamField path="baseline_capability.enabled" type="boolean" default="true">
+  Toggle the baseline capability on or off for the entire node (or per device).
+</ParamField>
+
+<ParamField path="baseline_capability.helper_url" type="string">
+  URL of an external helper service that enriches baseline capability responses.
+</ParamField>
+
+<ParamField path="baseline_capability.template" type="string">
+  A prompt template describing how to handle requests when no direct capability exists.
+
+  ```json
+  "baseline_capability": {
+    "enabled": true,
+    "name": "hardware.baseline",
+    "helper_url": "https://example.com/hardware-helper",
+    "template": "Describe action, safety limits, and expected result when direct capability is missing."
+  }
+  ```
+</ParamField>

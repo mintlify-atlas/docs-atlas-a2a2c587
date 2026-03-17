@@ -1,0 +1,132 @@
+---
+title: "Publishing an adapter"
+description: "Share your hardware adapter with the OAHL community by publishing to npm and the adapter registry."
+---
+
+Once your adapter passes the conformance test, you can publish it to npm and have it automatically listed on the [OAHL Marketplace](https://oahl.org/marketplace). The registry is crawler-based — you never manually update a central JSON file. You publish to npm, add your package name to a text file, and the crawler handles the rest.
+
+## Package naming
+
+Use one of the following naming conventions:
+
+| Format | Example |
+|--------|---------|
+| Scoped under `@oahl` | `@oahl/adapter-my-sensor` |
+| Unscoped community package | `oahl-adapter-my-sensor` |
+
+<Info>
+  The `@oahl` npm scope is reserved for first-party and approved packages. Use the unscoped `oahl-adapter-<name>` pattern for community adapters unless you have been granted scope access.
+</Info>
+
+## Step 1 — Add oahl-manifest.json
+
+The registry crawler discovers your adapter's metadata by reading `oahl-manifest.json` from the root of your npm package. This file is required for marketplace listing.
+
+Create it in the root of your adapter directory (alongside `package.json`):
+
+```json oahl-manifest.json
+{
+  "id": "oahl-adapter-my-sensor",
+  "name": "My Sensor Adapter",
+  "description": "Reads temperature and humidity via I2C and exposes them to AI agents.",
+  "author": "your-github-username",
+  "repository": "https://github.com/your-org/oahl-adapter-my-sensor",
+  "npm_package": "@your-org/oahl-adapter-my-sensor",
+  "hardware_tags": ["sensor", "i2c", "environment"],
+  "capabilities": ["sensor.read_temperature", "sensor.read_humidity"],
+  "license": "MIT"
+}
+```
+
+### Manifest field reference
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `id` | Yes | Must be `oahl-adapter-<slug>` — lowercase, hyphens only. Must be globally unique. |
+| `name` | Yes | Human-readable display name for the Marketplace card. |
+| `description` | Yes | One-sentence summary of what hardware this adapter supports. |
+| `author` | Yes | GitHub username or organisation name. |
+| `repository` | Yes | Public URL to the source code or npm page. |
+| `npm_package` | Yes | Exact npm package name used for `oahl install`. |
+| `hardware_tags` | Yes | Searchable tags: device class, protocol, platform (e.g. `["camera", "usb", "v4l2"]`). |
+| `capabilities` | Yes | Dot-notation capability names the adapter exposes. |
+| `license` | Yes | SPDX license identifier (e.g. `MIT`, `Apache-2.0`). |
+| `pypi_package` | No | If a Python companion package exists. |
+| `featured` | No | Set by the OAHL team only — do not self-assign. |
+| `readme_url` | No | Direct URL to README. Auto-filled from unpkg if omitted. |
+| `version` | No | Auto-filled by the crawler from the npm registry. |
+
+<Warning>
+  Make sure `oahl-manifest.json` is **not** listed in `.npmignore`. If the file is excluded from the published package, the crawler cannot read it and your adapter will not be listed.
+</Warning>
+
+Validate your manifest against the official schema before publishing:
+
+```bash
+npx ajv-cli validate \
+  -s registry/schemas/adapter.schema.json \
+  -d oahl-manifest.json
+```
+
+## Step 2 — Publish to npm
+
+Make sure your adapter builds cleanly and passes conformance, then publish:
+
+```bash
+npm run build
+oahl conformance @your-org/oahl-adapter-my-sensor
+npm publish --access public
+```
+
+<Note>
+  If you are publishing a scoped package for the first time, `--access public` is required. Private scoped packages are not visible to the registry crawler.
+</Note>
+
+## Step 3 — Register in adapters.txt
+
+Open a pull request to the OAHL repository and add a single line with your npm package name to `registry/adapters.txt`:
+
+```text registry/adapters.txt
+@your-org/oahl-adapter-my-sensor
+```
+
+That is the only change required. Once the PR is merged, the crawler runs, reads your `oahl-manifest.json` from npm, and adds your adapter to `registry.json`. Your adapter appears on the Marketplace automatically on the next registry build.
+
+## Step 4 — Versioning and updates
+
+The crawler always reads metadata from the **latest** published npm version. When you release a new version:
+
+1. Update `version` in `package.json`.
+2. Update `oahl-manifest.json` if capabilities have changed.
+3. Run `npm publish --access public`.
+
+No changes to `adapters.txt` are needed for updates — your package name is already registered.
+
+<Tip>
+  Follow semantic versioning. Breaking changes to capability names or schemas should be a major version bump, since agents and users may have workflows that depend on your declared capabilities.
+</Tip>
+
+## Getting featured
+
+The Marketplace shows a **Featured Adapters** section for high-quality, well-maintained adapters. To be considered:
+
+1. The adapter must be fully functional and actively maintained.
+2. Include a comprehensive `README.md` covering setup, capabilities, and example usage.
+3. All capabilities must have clear `description` and `schema` fields.
+4. Open an issue in the OAHL repository requesting featured status, with a link to your adapter and a short explanation.
+5. If approved, an OAHL maintainer sets `"featured": true` in the generated `registry.json`.
+
+<Info>
+  The `featured` field in `oahl-manifest.json` is ignored by the crawler — it is only set by maintainers in the generated registry output. Do not add it to your manifest.
+</Info>
+
+## Currently listed adapters
+
+The adapters currently registered in `adapters.txt` and visible on the Marketplace:
+
+| Package | Hardware | Key capabilities |
+|---------|----------|------------------|
+| `@oahl/adapter-usb-camera` | USB / V4L2 cameras | `camera.capture`, `camera.stream` |
+| `@oahl/adapter-rtl-sdr` | RTL2832U SDR dongles | `radio.scan`, `radio.capture` |
+| `@oahl/adapter-mock` | Simulated hardware | `mock.ping`, `mock.echo` |
+| `@oahl/adapter-android` | Android devices via ADB | 60+ capabilities across camera, sensors, UI, SMS, and system |

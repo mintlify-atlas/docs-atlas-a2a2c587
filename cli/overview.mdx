@@ -1,0 +1,130 @@
+---
+title: "CLI overview"
+description: "The OAHL CLI (`oahl`) manages hardware nodes, adapters, and configuration from the command line."
+---
+
+The `oahl` CLI is the primary tool for hardware owners to set up nodes, install adapters, scan connected devices, and manage configuration — all without editing JSON by hand.
+
+## Installation
+
+<Steps>
+  <Step title="Install globally via npm">
+    ```bash
+    npm install -g @fredabila/oahl
+    ```
+  </Step>
+  <Step title="Verify the installation">
+    ```bash
+    oahl --version
+    # 0.1.0
+    ```
+  </Step>
+  <Step title="Run the setup wizard">
+    ```bash
+    oahl init
+    ```
+  </Step>
+</Steps>
+
+<Note>
+  The binary name is `oahl`. All commands follow the pattern `oahl <command> [options]`.
+</Note>
+
+## Global options
+
+| Flag | Description |
+| --- | --- |
+| `--version` | Print the CLI version and exit |
+| `--help` | Print usage information for any command |
+
+```bash
+oahl --version
+oahl --help
+oahl start --help
+```
+
+## Authentication
+
+Several commands (`init`, `start`) require you to be linked to your OAHL Developer Portal account. Credentials are stored in `.oahl-session.json` in the current working directory.
+
+<Steps>
+  <Step title="Log in">
+    ```bash
+    oahl login
+    ```
+    You will be prompted for your **email address** and a **6-digit PIN** from the Developer Portal.
+  </Step>
+  <Step title="Save credentials">
+    When prompted, choose to save credentials on this machine. They are written to `.oahl-session.json`.
+  </Step>
+  <Step title="Log out">
+    ```bash
+    oahl logout
+    ```
+    This deletes `.oahl-session.json` from the current directory.
+  </Step>
+</Steps>
+
+<Warning>
+  Add `.oahl-session.json` to your `.gitignore`. It contains your email and PIN in plaintext.
+</Warning>
+
+## Commands
+
+<CardGroup cols={2}>
+  <Card title="login" icon="key">
+    Link this machine to your OAHL Developer Portal account by saving email and PIN credentials.
+  </Card>
+  <Card title="logout" icon="arrow-right-from-bracket">
+    Remove saved credentials (`.oahl-session.json`) from this machine.
+  </Card>
+  <Card title="init" icon="wand-magic-sparkles">
+    Run the interactive node setup wizard to generate `oahl-config.json`.
+  </Card>
+  <Card title="start" icon="play">
+    Start the local OAHL node daemon. Accepts `-p` for port and `-c` for config path.
+  </Card>
+  <Card title="install" icon="arrow-down-to-bracket">
+    Install a hardware adapter plugin via npm and register it in `oahl-config.json`.
+  </Card>
+  <Card title="remove" icon="trash">
+    Uninstall a hardware adapter plugin and remove it from `oahl-config.json`.
+  </Card>
+  <Card title="create-adapter" icon="code">
+    Scaffold a new OAHL adapter package with a valid interface implementation.
+  </Card>
+  <Card title="scan-ports" icon="magnifying-glass">
+    Scan connected USB and serial devices and print adapter suggestions and config snippets.
+  </Card>
+  <Card title="conformance" icon="circle-check">
+    Run OAHL conformance checks against a specific adapter or the full platform suite.
+  </Card>
+  <Card title="tui" icon="terminal">
+    Open the interactive terminal UI to manage nodes, plugins, devices, and access policies.
+  </Card>
+  <Card title="mcp" icon="server">
+    Start an MCP server that exposes OAHL hardware capabilities to an AI agent.
+  </Card>
+</CardGroup>
+
+## Typical workflow
+
+```bash
+# 1. Authenticate
+oahl login
+
+# 2. Create a config for your node
+oahl init
+
+# 3. Install the adapter for your hardware
+oahl install @oahl/adapter-usb-camera
+
+# 4. Start the node daemon
+oahl start
+```
+
+<Tip>
+  Use `oahl tui` at any time to interactively edit node settings, manage plugins, and configure per-device access policies without restarting the daemon.
+</Tip>
+
+For complete flag and option details for every command, see the [Command reference](/cli/commands).

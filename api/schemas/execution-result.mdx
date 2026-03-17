@@ -1,0 +1,163 @@
+---
+title: "ExecutionResult schema"
+description: "The OAHL execution result envelope returned by all capability execution endpoints."
+---
+
+Every capability execution — success or failure — returns an `ExecutionResult` envelope. The envelope is versioned, machine-readable, and designed for autonomous agents to parse and act on without human intervention.
+
+## Full example
+
+```json
+{
+  "schema_version": "1.0",
+  "operation_id": "cmd-3a7f92bc-1234",
+  "status": "success",
+  "completion": {
+    "done": true,
+    "state": "completed",
+    "progress_pct": 100
+  },
+  "capability": "camera.capture",
+  "device_id": "cam-01",
+  "timestamp": "2026-03-17T12:00:00.000Z",
+  "data": {
+    "image_url": "https://storage.example.com/captures/img-001.jpeg",
+    "width": 1920,
+    "height": 1080
+  },
+  "error": null,
+  "meta": {
+    "adapter_id": "adapter-usb-camera",
+    "relay_latency_ms": 142,
+    "node_id": "node-abc123"
+  }
+}
+```
+
+An error result:
+
+```json
+{
+  "schema_version": "1.0",
+  "operation_id": "cmd-9x3b112",
+  "status": "error",
+  "completion": {
+    "done": true,
+    "state": "failed"
+  },
+  "capability": "camera.capture",
+  "device_id": "cam-01",
+  "timestamp": "2026-03-17T12:05:00.000Z",
+  "data": null,
+  "error": {
+    "code": "EXECUTION_FAILED",
+    "message": "Camera device not responding",
+    "retryable": true,
+    "agent_recovery_hints": [
+      "Wait 5 seconds and retry",
+      "Call camera.reset to clear the fault before retrying"
+    ],
+    "details": null
+  },
+  "meta": {
+    "adapter_id": "adapter-usb-camera",
+    "relay_latency_ms": 30100,
+    "node_id": "node-abc123"
+  }
+}
+```
+
+## Fields
+
+<ResponseField name="schema_version" type="string" required>
+  Schema version of this envelope. Always `"1.0"` in the current release.
+</ResponseField>
+
+<ResponseField name="operation_id" type="string" required>
+  Unique identifier for this execution operation, assigned by the cloud relay. Example: `"cmd-3a7f92bc-1234"`.
+</ResponseField>
+
+<ResponseField name="status" type="string" required>
+  Overall execution status. One of:
+
+  | Value | Description |
+  |-------|-------------|
+  | `accepted` | Command received and queued |
+  | `in_progress` | Execution is underway |
+  | `success` | Execution completed successfully |
+  | `error` | Execution failed — inspect `error` for details |
+</ResponseField>
+
+<ResponseField name="completion" type="object" required>
+  Fine-grained completion state.
+
+  <Expandable title="completion fields">
+    <ResponseField name="done" type="boolean" required>
+      `true` when execution has finished (either successfully or with an error).
+    </ResponseField>
+    <ResponseField name="state" type="string" required>
+      Detailed state: `queued`, `in_progress`, `completed`, or `failed`.
+    </ResponseField>
+    <ResponseField name="progress_pct" type="number">
+      Optional progress percentage from `0` to `100`. Present for long-running capabilities.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="capability" type="string" required>
+  The capability name that was executed. Example: `"camera.capture"`.
+</ResponseField>
+
+<ResponseField name="device_id" type="string" required>
+  ID of the device that executed the capability.
+</ResponseField>
+
+<ResponseField name="timestamp" type="string" required>
+  ISO 8601 date-time when the result was produced by the adapter.
+</ResponseField>
+
+<ResponseField name="data" type="any | null">
+  Capability-specific structured payload. The shape depends on the capability. `null` when there is no output data or when `status` is `error`. For batch executions, this is an array of per-command results.
+</ResponseField>
+
+<ResponseField name="error" type="object | null">
+  Present when `status` is `error`. `null` on success.
+
+  <Expandable title="error fields">
+    <ResponseField name="code" type="string" required>
+      Machine-readable error code. Example: `"EXECUTION_FAILED"`.
+    </ResponseField>
+    <ResponseField name="message" type="string" required>
+      Human-readable error description.
+    </ResponseField>
+    <ResponseField name="retryable" type="boolean">
+      Whether the calling agent may safely retry the same request.
+    </ResponseField>
+    <ResponseField name="agent_recovery_hints" type="string[]">
+      Natural-language recovery suggestions for autonomous agents. Example: `["Call camera.reset before retrying"]`. Agents should attempt these steps before escalating to a human.
+    </ResponseField>
+    <ResponseField name="details" type="any | null">
+      Optional structured error details (adapter-specific).
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="meta" type="object">
+  Optional relay and adapter metadata.
+
+  <Expandable title="meta fields">
+    <ResponseField name="adapter_id" type="string">
+      Identifier of the adapter that executed the capability.
+    </ResponseField>
+    <ResponseField name="relay_latency_ms" type="number">
+      Time in milliseconds between command dispatch and result receipt at the cloud layer.
+    </ResponseField>
+    <ResponseField name="node_id" type="string">
+      ID of the node that executed the capability.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<Note>
+  The `agent_recovery_hints` field is a key design feature of OAHL. It enables fully autonomous hardware error recovery — agents can follow the hints without requiring human intervention.
+</Note>

@@ -1,0 +1,510 @@
+---
+title: "Command reference"
+description: "Complete reference for every oahl CLI command, subcommand, flag, and option."
+---
+
+All commands follow the pattern:
+
+```bash
+oahl <command> [options]
+```
+
+Run `oahl --help` for a top-level summary, or `oahl <command> --help` for per-command usage.
+
+---
+
+<AccordionGroup>
+
+  <Accordion title="oahl login" icon="key">
+    **Link this machine to your OAHL Developer Portal account.**
+
+    Prompts for your email address and 6-digit PIN, then optionally saves them to `.oahl-session.json` in the current directory. Subsequent commands that require authentication (such as `init` and `start`) read from this file automatically.
+
+    **Syntax**
+
+    ```bash
+    oahl login
+    ```
+
+    **Interactive prompts**
+
+    | Prompt | Description |
+    | --- | --- |
+    | Email address | Your Developer Portal email. Must contain `@`. |
+    | 6-digit PIN | Exactly 6 numeric digits. |
+    | Remember credentials? | Saves to `.oahl-session.json` when confirmed. |
+
+    **Example**
+
+    ```bash
+    oahl login
+    # 🔐 Provider Authentication Required
+    # Enter your Developer Portal credentials to link this node to your account.
+    #
+    # ? Email Address › user@example.com
+    # ? 6-Digit PIN › ······
+    # ? Remember these credentials on this machine? › Yes
+    # ✅ Credentials saved to .oahl-session.json
+    # ✨ Successfully logged in as user@example.com
+    ```
+
+    <Warning>
+      Add `.oahl-session.json` to your `.gitignore`. It stores credentials in plaintext.
+    </Warning>
+  </Accordion>
+
+  <Accordion title="oahl logout" icon="arrow-right-from-bracket">
+    **Remove saved credentials from this machine.**
+
+    Deletes `.oahl-session.json` from the current working directory. Has no effect if no session file exists.
+
+    **Syntax**
+
+    ```bash
+    oahl logout
+    ```
+
+    **Example**
+
+    ```bash
+    oahl logout
+    # 👋 Logged out. Credentials removed.
+    ```
+
+    If no session is active:
+
+    ```bash
+    oahl logout
+    # ℹ️  No active session found.
+    ```
+  </Accordion>
+
+  <Accordion title="oahl init" icon="wand-magic-sparkles">
+    **Interactively create a new `oahl-config.json` file for your hardware node.**
+
+    Runs the node setup wizard. Prompts for node identity, provider name, and the first hardware device to attach. Writes the completed configuration to `oahl-config.json` in the current directory. Requires authentication — you will be prompted to log in if no session exists.
+
+    **Syntax**
+
+    ```bash
+    oahl init
+    ```
+
+    **Interactive prompts**
+
+    | Prompt | Description | Default |
+    | --- | --- | --- |
+    | Node ID | Unique identifier for this node | `local-node-01` |
+    | Provider name | Human-readable lab or organization name | `Local Lab` |
+    | Device type | First hardware type to configure | — |
+    | Device ID | Identifier for the first device | `<type>-01` |
+    | Public device? | Whether remote agents can use this device | `false` |
+
+    **Device type choices**
+
+    | Choice | Adapter added | Capabilities |
+    | --- | --- | --- |
+    | USB Camera | `@oahl/adapter-usb-camera` | `camera.capture`, `camera.stream` |
+    | RTL-SDR Radio | `@oahl/adapter-rtl-sdr` | `radio.scan`, `radio.measure_power` |
+    | Mock / Virtual Sensor | `@oahl/adapter-mock` | `sensor.read` |
+    | Skip for now | — | — |
+
+    **Example**
+
+    ```bash
+    oahl init
+    # 🤖 Welcome to the OAHL Node Setup Wizard!
+    #
+    # ? What is the unique ID for this node? › my-lab-01
+    # ? What is your provider name? › Accra Test Lab
+    # ? What type of hardware device are you connecting first? › USB Camera
+    # ? Enter an ID for your camera: › camera-01
+    # ? Should this device be public (usable by remote agents)? › No
+    #
+    # ✅ Successfully generated configuration at: /path/to/oahl-config.json
+    #
+    # 🚀 Next steps:
+    # 1. Review your newly created oahl-config.json
+    # 2. Start the local node using:
+    #    oahl start
+    ```
+  </Accordion>
+
+  <Accordion title="oahl start" icon="play">
+    **Start the local OAHL node daemon.**
+
+    Loads `oahl-config.json`, authenticates the provider, and starts the Express server that connects to the Cloud Registry. Requires authentication — you will be prompted to log in if no session exists. Requires `oahl-config.json` to exist (run `oahl init` first).
+
+    **Syntax**
+
+    ```bash
+    oahl start [options]
+    ```
+
+    **Options**
+
+    | Flag | Description | Default |
+    | --- | --- | --- |
+    | `-p, --port <number>` | Port for the node server | `3000` |
+    | `-c, --config <path>` | Path to `oahl-config.json` | `./oahl-config.json` |
+
+    **Example**
+
+    ```bash
+    # Start on the default port
+    oahl start
+
+    # Start on a custom port with a custom config
+    oahl start --port 8080 --config ./configs/lab-node.json
+    ```
+
+    **Environment variables set at startup**
+
+    | Variable | Value |
+    | --- | --- |
+    | `PORT` | Value of `--port` |
+    | `OAHL_OWNER_EMAIL` | Email from saved session |
+    | `OAHL_OWNER_PIN` | PIN from saved session |
+
+    <Tip>
+      To run completely offline without the Cloud Registry, remove or empty the `cloud_url` field in your `oahl-config.json`. The local server still starts and accepts connections on your LAN.
+    </Tip>
+  </Accordion>
+
+  <Accordion title="oahl install <adapter>" icon="arrow-down-to-bracket">
+    **Install a hardware adapter plugin.**
+
+    Runs `npm install <adapter>` and, if `oahl-config.json` exists in the current directory, appends the adapter to the `plugins` array.
+
+    **Syntax**
+
+    ```bash
+    oahl install <adapter>
+    ```
+
+    **Arguments**
+
+    | Argument | Description |
+    | --- | --- |
+    | `<adapter>` | npm package name of the adapter (e.g. `@oahl/adapter-usb-camera`) |
+
+    **Example**
+
+    ```bash
+    oahl install @oahl/adapter-usb-camera
+    # 📦 Installing adapter: @oahl/adapter-usb-camera...
+    # ...
+    # ✅ Added @oahl/adapter-usb-camera to oahl-config.json plugins list.
+    # ✨ Successfully installed @oahl/adapter-usb-camera. Restart your node to enable it.
+    ```
+
+    <Note>
+      Restart the node daemon after installing an adapter for it to take effect.
+    </Note>
+  </Accordion>
+
+  <Accordion title="oahl remove <adapter>" icon="trash">
+    **Remove a hardware adapter plugin.**
+
+    Runs `npm uninstall <adapter>` and removes the adapter from the `plugins` array in `oahl-config.json`.
+
+    **Syntax**
+
+    ```bash
+    oahl remove <adapter>
+    ```
+
+    **Arguments**
+
+    | Argument | Description |
+    | --- | --- |
+    | `<adapter>` | npm package name of the adapter to remove |
+
+    **Example**
+
+    ```bash
+    oahl remove @oahl/adapter-rtl-sdr
+    # 🗑️  Removing adapter: @oahl/adapter-rtl-sdr...
+    # ...
+    # ✅ Removed @oahl/adapter-rtl-sdr from oahl-config.json plugins list.
+    # ✨ Successfully removed @oahl/adapter-rtl-sdr.
+    ```
+  </Accordion>
+
+  <Accordion title="oahl create-adapter <name>" icon="code">
+    **Scaffold a new OAHL adapter package in the current workspace.**
+
+    Creates a new directory containing a `package.json`, `tsconfig.json`, `README.md`, and a TypeScript source file with a complete `Adapter` interface implementation. The package name is automatically prefixed with `adapter-` if not already present, and scoped to `@oahl/`.
+
+    **Syntax**
+
+    ```bash
+    oahl create-adapter <name> [options]
+    ```
+
+    **Arguments**
+
+    | Argument | Description |
+    | --- | --- |
+    | `<name>` | Name for the new adapter (e.g. `my-sensor` or `@oahl/adapter-my-sensor`) |
+
+    **Options**
+
+    | Flag | Description | Default |
+    | --- | --- | --- |
+    | `-d, --dir <path>` | Directory in which to create the adapter folder | `.` (current directory) |
+
+    **Example**
+
+    ```bash
+    oahl create-adapter my-sensor
+    # ✅ Adapter scaffold created at ./adapter-my-sensor
+    # Next steps:
+    # 1. cd adapter-my-sensor
+    # 2. npm install
+    # 3. npm run build
+    # 4. oahl install @oahl/adapter-my-sensor
+    ```
+
+    Create inside a monorepo `adapters/` folder:
+
+    ```bash
+    oahl create-adapter thermal-camera --dir ./adapters
+    ```
+
+    **Generated files**
+
+    ```
+    adapter-my-sensor/
+    ├── package.json        # @oahl/adapter-my-sensor, version 0.1.0
+    ├── tsconfig.json       # Extends ../../tsconfig.base.json
+    ├── README.md
+    └── src/
+        └── index.ts        # AdapterMySensor class implementing Adapter
+    ```
+
+    The scaffolded adapter includes `initialize()`, `healthCheck()`, `getDevices()`, `getCapabilities()`, and `execute()` with a stub `custom.ping` capability.
+  </Accordion>
+
+  <Accordion title="oahl scan-ports" icon="magnifying-glass">
+    **Scan connected USB and serial devices and print adapter creation guidance.**
+
+    Enumerates attached USB and serial devices using platform-native tooling (`lsusb` on Linux, `system_profiler` on macOS, `Get-PnpDevice` on Windows), then classifies each device and suggests an appropriate OAHL adapter along with capability hints and a ready-to-paste config snippet.
+
+    **Syntax**
+
+    ```bash
+    oahl scan-ports [options]
+    ```
+
+    **Options**
+
+    | Flag | Description | Default |
+    | --- | --- | --- |
+    | `--json` | Output results as JSON instead of formatted text | `false` |
+
+    **Device classification**
+
+    | Device keywords | Suggested adapter | Suggested type |
+    | --- | --- | --- |
+    | `android`, `adb` | `@oahl/adapter-android` | `mobile` |
+    | `camera`, `video`, `webcam` | `@oahl/adapter-usb-camera` | `camera` |
+    | `rtl`, `sdr`, `radio` | `@oahl/adapter-rtl-sdr` | `sdr` |
+    | Any serial port | `@oahl/adapter-custom` | `serial-device` |
+    | Unrecognized USB | `@oahl/adapter-custom` | `custom` |
+
+    **Example — human-readable output**
+
+    ```bash
+    oahl scan-ports
+    # 🔎 Scanning connected ports/devices...
+    # ✅ Detected 2 device(s):
+    #
+    # 1. [USB] HD Pro Webcam C920
+    #    id: HD Pro Webcam C920
+    #    status: present
+    #    vendor: Logitech
+    #    suggested adapter: @oahl/adapter-usb-camera
+    #    suggested type: camera
+    #    capability hints: camera.capture
+    #    config snippet:
+    #    {"id":"detected-1","type":"camera","adapter":"usb-camera","capabilities":["camera.capture"]}
+    #
+    # 2. [SERIAL] /dev/ttyUSB0
+    #    id: /dev/ttyUSB0
+    #    status: present
+    #    suggested adapter: @oahl/adapter-custom
+    #    suggested type: serial-device
+    #    capability hints: device.read, device.write
+    #    config snippet:
+    #    {"id":"detected-2","type":"serial-device","adapter":"custom","capabilities":["device.read","device.write"]}
+    ```
+
+    **Example — JSON output**
+
+    ```bash
+    oahl scan-ports --json
+    ```
+
+    ```json
+    {
+      "timestamp": 1710000000000,
+      "devices": [
+        {
+          "portType": "usb",
+          "id": "HD Pro Webcam C920",
+          "name": "HD Pro Webcam C920",
+          "status": "present",
+          "vendor": "Logitech"
+        }
+      ]
+    }
+    ```
+
+    <Tip>
+      Pipe JSON output to `jq` for filtering: `oahl scan-ports --json | jq '.devices[] | select(.portType == "serial")'`
+    </Tip>
+  </Accordion>
+
+  <Accordion title="oahl conformance [adapter]" icon="circle-check">
+    **Run OAHL conformance checks against a specific adapter or the full platform suite.**
+
+    When called with an adapter argument, loads the adapter and executes the OAHL adapter conformance test suite. When called without arguments, runs the internal platform conformance tests (`npm run test:conformance --workspace=@oahl/core`) from the workspace root.
+
+    **Syntax**
+
+    ```bash
+    oahl conformance [adapter] [options]
+    ```
+
+    **Arguments**
+
+    | Argument | Description |
+    | --- | --- |
+    | `[adapter]` | Optional. Package name of the adapter to test (e.g. `@oahl/adapter-mock`) |
+
+    **Options**
+
+    | Flag | Description | Default |
+    | --- | --- | --- |
+    | `--workspace <path>` | Path to the OAHL workspace root for platform-level tests | `process.cwd()` |
+
+    **Exit codes**
+
+    | Code | Meaning |
+    | --- | --- |
+    | `0` | All conformance checks passed |
+    | `1` | One or more checks failed |
+
+    **Examples**
+
+    ```bash
+    # Test a specific adapter
+    oahl conformance @oahl/adapter-usb-camera
+
+    # Run full platform conformance from the repo root
+    oahl conformance
+
+    # Run platform conformance from a specific workspace path
+    oahl conformance --workspace /path/to/oahl
+    ```
+
+    ```bash
+    oahl conformance @oahl/adapter-mock
+    # ✅ Internal conformance checks passed.
+    ```
+  </Accordion>
+
+  <Accordion title="oahl tui" icon="terminal">
+    **Open the interactive terminal UI to configure nodes, plugins, devices, and access policies.**
+
+    Loads `oahl-config.json` and presents a menu-driven interface for editing all aspects of node configuration. Changes are held in memory until you choose **Save** or **Save and exit**. Exiting without saving prompts for confirmation if there are unsaved changes.
+
+    **Syntax**
+
+    ```bash
+    oahl tui [options]
+    ```
+
+    **Options**
+
+    | Flag | Description | Default |
+    | --- | --- | --- |
+    | `-c, --config <path>` | Path to `oahl-config.json` | `./oahl-config.json` |
+
+    **TUI menu options**
+
+    | Menu item | Description |
+    | --- | --- |
+    | Edit node settings | Change node ID, provider name, owner ID, cloud URL, and API key |
+    | Manage plugins | Add or remove adapter plugins from the `plugins` array |
+    | Manage devices + access policies | Add, edit, or remove device entries including visibility, allowed agents/orgs, and session limits |
+    | Import detected devices from plugins | Auto-populate `devices` by querying installed adapter plugins for their device list |
+    | Save | Write current config to disk without exiting |
+    | Save and exit | Write current config to disk and close the TUI |
+    | Exit without saving | Discard unsaved changes and close the TUI |
+
+    **Device access visibility options**
+
+    | Value | Description |
+    | --- | --- |
+    | `public` | Any agent can use this device |
+    | `shared` | Only agents in the allow-list can use this device |
+    | `private` | Only the owner or agents in the allow-list can use this device |
+
+    **Examples**
+
+    ```bash
+    # Open TUI with the default config
+    oahl tui
+
+    # Open TUI with a custom config path
+    oahl tui --config ./configs/prod-node.json
+    ```
+
+    <Tip>
+      Use **Import detected devices from plugins** after installing a new adapter to automatically populate the devices list with capability hints, then edit access policies for each device before saving.
+    </Tip>
+  </Accordion>
+
+  <Accordion title="oahl mcp" icon="server">
+    **Start an MCP server to expose OAHL hardware capabilities to an AI agent.**
+
+    Launches a Model Context Protocol server that connects to the OAHL Cloud and makes registered hardware capabilities available as MCP tools. The agent API key must be provided via `--key` or the `OAHL_AGENT_API_KEY` environment variable.
+
+    **Syntax**
+
+    ```bash
+    oahl mcp [options]
+    ```
+
+    **Options**
+
+    | Flag | Description | Default |
+    | --- | --- | --- |
+    | `-u, --url <url>` | OAHL Cloud URL to connect to | `https://oahl.onrender.com` |
+    | `-k, --key <key>` | Agent API key (overrides `OAHL_AGENT_API_KEY`) | — |
+
+    **Environment variables**
+
+    | Variable | Description |
+    | --- | --- |
+    | `OAHL_AGENT_API_KEY` | Agent API key used when `--key` is not supplied |
+
+    **Examples**
+
+    ```bash
+    # Start MCP server using an environment variable for the key
+    export OAHL_AGENT_API_KEY=my-agent-key
+    oahl mcp
+
+    # Start MCP server with an explicit key and custom cloud URL
+    oahl mcp --key my-agent-key --url https://my-oahl-instance.example.com
+    ```
+
+    <Note>
+      `oahl mcp` is intended for agent runtimes that support the Model Context Protocol. It is not needed for direct SDK usage.
+    </Note>
+  </Accordion>
+
+</AccordionGroup>

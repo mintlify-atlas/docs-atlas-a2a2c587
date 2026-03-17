@@ -1,0 +1,162 @@
+---
+title: "Sessions"
+description: "Sessions provide exclusive, controlled access to a hardware device for the duration of an agent interaction."
+---
+
+A session is a reserved allocation of a single hardware device for a single agent interaction. While a session is active, no other agent can execute commands on that device. Sessions prevent conflicting or interleaved commands from reaching hardware simultaneously—critical for devices like cameras or radios where concurrent access would produce undefined behavior.
+
+## Why exclusivity matters
+
+Consider two agents both trying to capture images from the same camera at the same time. Without exclusivity, their commands interleave unpredictably and neither gets a reliable result. OAHL solves this by requiring an agent to hold an active session before issuing any execution command. The `SessionManager` in `@oahl/core` enforces the one-active-session-per-device invariant:
+
+```typescript packages/core/src/SessionManager.ts
+startSession(deviceId: string): Session {
+  const activeSession = this.getActiveSessionForDevice(deviceId);
+  if (activeSession) {
+    throw new Error(`Device ${deviceId} already has an active session`);
+  }
+  // ...
+}
+```
+
+## Session lifecycle
+
+<Steps>
+  <Step title="Request a session">
+    Call `POST /v1/requests` with the capability or device you need. The cloud allocates a session and returns a `session_id`.
+
+    ```bash
+    curl -X POST https://oahl.onrender.com/v1/requests \\
+      -H "Authorization: Bearer <agent_api_key>" \\
+      -H "Content-Type: application/json" \\
+      -d '{ "capability": "camera.capture" }'
+    ```
+
+    ```json Response
+    {
+      "session_id": "sess-3f7a2c1d-...",
+      "status": "accepted"
+    }
+    ```
+  </Step>
+  <Step title="Execute capabilities">
+    Use the `session_id` to call `POST /v1/sessions/{session_id}/execute` one or more times.
+
+    ```bash
+    curl -X POST https://oahl.onrender.com/v1/sessions/sess-3f7a2c1d-.../execute \\
+      -H "Authorization: Bearer <agent_api_key>" \\
+      -H "Content-Type: application/json" \\
+      -d '{ "capability": "camera.capture", "params": { "format": "jpeg" } }'
+    ```
+
+    ```json Response envelope
+    {
+      "schema_version": "1.0",
+      "operation_id": "cmd-3a7f92bc-1234",
+      "status": "success",
+      "completion": { "done": true, "state": "completed" },
+      "capability": "camera.capture",
+      "device_id": "usb-cam-1",
+      "timestamp": "2026-03-17T10:00:00Z",
+      "data": { "image_base64": "..." }
+    }
+    ```
+  </Step>
+  <Step title="Stop the session">
+    Always call `POST /v1/sessions/{session_id}/stop` when done—on both success and failure paths. This releases the device so other agents can allocate it.
+
+    ```bash
+    curl -X POST https://oahl.onrender.com/v1/sessions/sess-3f7a2c1d-.../stop \\
+      -H "Authorization: Bearer <agent_api_key>"
+    ```
+
+    ```json Response
+    { "status": "stopped" }
+    ```
+  </Step>
+</Steps>
+
+<Warning>
+  Failing to call `stop` leaves the device locked. Always call `stop` in your error-handling path as well as in the success path.
+</Warning>
+
+## Session IDs
+
+Session IDs are opaque strings with the prefix `sess-`, for example: `sess-3f7a2c1d-...`. They are assigned by the cloud relay when the session is created and are only valid for the lifetime of that session.
+
+## Requesting by capability vs. by device
+
+You can allocate a session either by naming a capability or by targeting a specific device:
+
+<Tabs>
+  <Tab title="By capability">
+    The cloud finds any available device that supports the capability and allocates a session on it.
+
+    ```json POST /v1/requests
+    {
+      "capability": "camera.capture"
+    }
+    ```
+  </Tab>
+  <Tab title="By device">
+    Target a specific device by its ID. Optionally scope to a node.
+
+    ```json POST /v1/requests
+    {
+      "device_id": "usb-cam-1",
+      "node_id": "my-laptop-01"
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Execution result envelope
+
+Every `execute` response follows the OAHL execution result envelope:
+
+| Field | Description |
+|---|---|
+| `schema_version` | Always `"1.0"`. |
+| `operation_id` | Unique ID assigned by the cloud relay (format: `cmd-...`). |
+| `status` | `accepted`, `in_progress`, `success`, or `error`. |
+| `completion.done` | Boolean indicating whether execution has finished. |
+| `completion.state` | `queued`, `in_progress`, `completed`, or `failed`. |
+| `capability` | The capability that was executed. |
+| `device_id` | The device that handled the command. |
+| `data` | Capability-specific result payload (present on success). |
+| `error` | Error details including `code`, `message`, and `agent_recovery_hints`. |
+
+## Error handling
+
+<AccordionGroup>
+  <Accordion title="Device not found (404)">
+    No device matching the requested capability or device ID is available. The node may be offline or the device may be busy. Retry with a different capability filter or wait and try again.
+  </Accordion>
+  <Accordion title="Access denied (403)">
+    The agent's identity does not satisfy the device's access policy. Check that `x-agent-id` and `x-agent-org-id` headers are set correctly and that the device policy allows your agent.
+  </Accordion>
+  <Accordion title="Session not found (404 on execute/stop)">
+    The session ID is invalid or the session has already been stopped. Sessions cannot be reused after `stop` is called.
+  </Accordion>
+  <Accordion title="Node timeout (504)">
+    The hardware node did not respond within the relay timeout window. The `x-oahl-relay-mode` response header reports whether this was a WebSocket or polling timeout. Check that the node is online and the device is functioning.
+  </Accordion>
+</AccordionGroup>
+
+<Note>
+  When an error result contains `agent_recovery_hints`, those strings are natural-language suggestions the agent can use to determine the next action—such as retrying with different parameters or checking hardware status.
+</Note>
+
+## Batch execution
+
+For workflows that need multiple commands on the same device in sequence, use `POST /v1/sessions/{session_id}/execute-batch` to reduce round-trip overhead. The batch stops on the first error by default.
+
+```json POST /v1/sessions/{session_id}/execute-batch
+{
+  "commands": [
+    { "capability": "radio.scan", "params": { "start_freq_mhz": 88, "end_freq_mhz": 108 } },
+    { "capability": "radio.measure_power", "params": { "freq_mhz": 98.5 } }
+  ],
+  "timeout_ms": 60000
+}
+```

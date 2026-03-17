@@ -1,0 +1,487 @@
+---
+title: 'JavaScript / TypeScript SDK'
+description: 'The official @oahl/sdk package for Node.js and browser — with OahlClient for local nodes and CloudClient for the cloud relay.'
+---
+
+The `@oahl/sdk` package provides two clients:
+
+- **`OahlClient`** — connects directly to a local OAHL hardware node
+- **`CloudClient`** — connects to the OAHL cloud relay for capability discovery and brokered sessions
+
+## Installation
+
+```bash
+npm install @oahl/sdk
+```
+
+<Note>
+  Both clients are exported from the same package. Import the one you need or
+  import both.
+</Note>
+
+---
+
+## OahlClient (local node)
+
+`OahlClient` talks directly to a running OAHL node over HTTP. Use it when your agent has direct network access to a hardware node.
+
+### Constructor
+
+```typescript
+new OahlClient(baseUrl?: string)
+```
+
+<ParamField path="baseUrl" type="string" default="http://localhost:3000">
+  Base URL of the local OAHL node. Trailing slashes are ignored.
+</ParamField>
+
+### Methods
+
+#### `health()`
+
+```typescript
+health(): Promise<any>
+```
+
+Checks whether the OAHL node is reachable and healthy.
+
+<ResponseField name="result" type="object">
+  Health status response from the node.
+</ResponseField>
+
+---
+
+#### `getDevices()`
+
+```typescript
+getDevices(): Promise<Device[]>
+```
+
+Returns all devices registered with the node.
+
+<ResponseField name="result" type="Device[]">
+  Array of device objects managed by the node.
+</ResponseField>
+
+---
+
+#### `getCapabilities(deviceId)`
+
+```typescript
+getCapabilities(deviceId: string): Promise<Capability[]>
+```
+
+Returns all capabilities exposed by a specific device.
+
+<ParamField path="deviceId" type="string" required>
+  The ID of the device to query.
+</ParamField>
+
+<ResponseField name="result" type="Capability[]">
+  Array of capability definitions for the device.
+</ResponseField>
+
+---
+
+#### `startSession(deviceId)`
+
+```typescript
+startSession(deviceId: string): Promise<Session>
+```
+
+Opens a new session with a device. You must hold an active session to call `execute`.
+
+<ParamField path="deviceId" type="string" required>
+  The ID of the device to start a session with.
+</ParamField>
+
+<ResponseField name="result" type="Session">
+  <Expandable title="Session properties">
+    <ResponseField name="id" type="string" required>
+      Unique session identifier.
+    </ResponseField>
+    <ResponseField name="deviceId" type="string" required>
+      ID of the device this session belongs to.
+    </ResponseField>
+    <ResponseField name="startTime" type="number" required>
+      Unix timestamp (ms) when the session started.
+    </ResponseField>
+    <ResponseField name="status" type="string" required>
+      Current session status, e.g. `active`.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+---
+
+#### `execute(sessionId, capabilityName, args?)`
+
+```typescript
+execute(sessionId: string, capabilityName: string, args?: any): Promise<any>
+```
+
+Executes a named capability within an active session.
+
+<ParamField path="sessionId" type="string" required>
+  The active session ID returned by `startSession`.
+</ParamField>
+
+<ParamField path="capabilityName" type="string" required>
+  The capability to invoke, e.g. `camera.capture`.
+</ParamField>
+
+<ParamField path="args" type="object">
+  Optional arguments passed to the capability handler.
+</ParamField>
+
+<ResponseField name="result" type="any">
+  The return value from the capability handler.
+</ResponseField>
+
+---
+
+#### `stopSession(sessionId)`
+
+```typescript
+stopSession(sessionId: string): Promise<void>
+```
+
+Terminates an active session and releases the device.
+
+<ParamField path="sessionId" type="string" required>
+  The ID of the session to stop.
+</ParamField>
+
+---
+
+#### `getSession(sessionId)`
+
+```typescript
+getSession(sessionId: string): Promise<Session>
+```
+
+Fetches the current state of a session.
+
+<ParamField path="sessionId" type="string" required>
+  The session ID to look up.
+</ParamField>
+
+<ResponseField name="result" type="Session">
+  The current session object. Same shape as the return value of `startSession`.
+</ResponseField>
+
+---
+
+## CloudClient (cloud relay)
+
+`CloudClient` connects to the OAHL cloud relay. Use it to discover capabilities across the OAHL network and request brokered sessions without direct node access.
+
+### Constructor
+
+```typescript
+new CloudClient(baseUrl?: string, agentApiKey?: string)
+```
+
+<ParamField path="baseUrl" type="string" default="https://oahl.onrender.com">
+  Base URL of the OAHL cloud relay. Trailing slashes are stripped automatically.
+</ParamField>
+
+<ParamField path="agentApiKey" type="string">
+  Agent API key for authenticated requests. Can also be set later with
+  `setAgentApiKey`.
+</ParamField>
+
+### Methods
+
+#### `setAgentApiKey(agentApiKey)`
+
+```typescript
+setAgentApiKey(agentApiKey: string): void
+```
+
+Sets or replaces the API key used for `Authorization: Bearer` headers on all subsequent requests.
+
+<ParamField path="agentApiKey" type="string" required>
+  The agent API key to use.
+</ParamField>
+
+---
+
+#### `getCapabilities(query?)`
+
+```typescript
+getCapabilities(query?: CloudCapabilitiesQuery): Promise<CloudCapabilitiesResponse>
+```
+
+Searches and filters capabilities registered across the OAHL cloud network. All query fields are optional — omit `query` entirely to list everything.
+
+<ParamField path="query" type="CloudCapabilitiesQuery">
+  <Expandable title="CloudCapabilitiesQuery fields">
+    <ParamField path="q" type="string">
+      Free-text search term matched against device and capability metadata.
+    </ParamField>
+    <ParamField path="type" type="string">
+      Filter by device type.
+    </ParamField>
+    <ParamField path="provider" type="string">
+      Filter by provider name.
+    </ParamField>
+    <ParamField path="node_id" type="string">
+      Filter by specific node ID.
+    </ParamField>
+    <ParamField path="capability" type="string">
+      Filter by capability name.
+    </ParamField>
+    <ParamField path="page" type="number">
+      Page number for paginated results (1-indexed).
+    </ParamField>
+    <ParamField path="page_size" type="number">
+      Number of results per page.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ResponseField name="result" type="CloudCapabilitiesResponse">
+  <Expandable title="CloudCapabilitiesResponse properties">
+    <ResponseField name="timestamp" type="number" required>
+      Unix timestamp (ms) when the response was generated.
+    </ResponseField>
+    <ResponseField name="devices" type="CloudCapabilityDevice[]" required>
+      Array of matched devices and their capabilities.
+    </ResponseField>
+    <ResponseField name="pagination" type="object">
+      <Expandable title="pagination properties">
+        <ResponseField name="page" type="number" required>Current page number.</ResponseField>
+        <ResponseField name="page_size" type="number" required>Results per page.</ResponseField>
+        <ResponseField name="total" type="number" required>Total matching records.</ResponseField>
+        <ResponseField name="total_pages" type="number" required>Total number of pages.</ResponseField>
+        <ResponseField name="has_next" type="boolean" required>Whether a next page exists.</ResponseField>
+        <ResponseField name="has_prev" type="boolean" required>Whether a previous page exists.</ResponseField>
+      </Expandable>
+    </ResponseField>
+    <ResponseField name="filters" type="object">
+      Echo of the filters applied to the query.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+---
+
+#### `requestSession(input)`
+
+```typescript
+requestSession(input: CloudRequestSessionInput): Promise<CloudSessionRequestResponse>
+```
+
+Requests a brokered session via the cloud relay. The relay locates a matching node and device based on the input.
+
+<ParamField path="input" type="CloudRequestSessionInput">
+  <Expandable title="CloudRequestSessionInput fields">
+    <ParamField path="capability" type="string">
+      Capability name to use for matching, e.g. `camera.capture`.
+    </ParamField>
+    <ParamField path="device_id" type="string">
+      Request a session with a specific device by ID.
+    </ParamField>
+    <ParamField path="node_id" type="string">
+      Constrain the session to a specific node by ID.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ResponseField name="result" type="CloudSessionRequestResponse">
+  <Expandable title="properties">
+    <ResponseField name="session_id" type="string" required>
+      The cloud session ID to use in subsequent `execute` and `stopSession` calls.
+    </ResponseField>
+    <ResponseField name="status" type="string" required>
+      Initial session status.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+---
+
+#### `execute(sessionId, input)`
+
+```typescript
+execute(sessionId: string, input: CloudExecuteInput): Promise<any>
+```
+
+Executes a capability through a cloud-brokered session.
+
+<ParamField path="sessionId" type="string" required>
+  The session ID returned by `requestSession`.
+</ParamField>
+
+<ParamField path="input" type="CloudExecuteInput">
+  <Expandable title="CloudExecuteInput fields">
+    <ParamField path="capability" type="string" required>
+      The capability to invoke, e.g. `camera.capture`.
+    </ParamField>
+    <ParamField path="params" type="object">
+      Key-value arguments forwarded to the capability handler.
+    </ParamField>
+    <ParamField path="timeout_ms" type="number">
+      Execution timeout in milliseconds.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ResponseField name="result" type="any">
+  The return value from the capability handler on the remote node.
+</ResponseField>
+
+---
+
+#### `stopSession(sessionId)`
+
+```typescript
+stopSession(sessionId: string): Promise<CloudStopSessionResponse>
+```
+
+Terminates a cloud session and releases the underlying device reservation.
+
+<ParamField path="sessionId" type="string" required>
+  The cloud session ID to stop.
+</ParamField>
+
+<ResponseField name="result" type="CloudStopSessionResponse">
+  <Expandable title="properties">
+    <ResponseField name="status" type="string" required>
+      Final session status after stopping.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+---
+
+## TypeScript interfaces
+
+All interfaces are exported directly from `@oahl/sdk`.
+
+### `CloudCapabilitiesQuery`
+
+```typescript
+export interface CloudCapabilitiesQuery {
+  q?: string;
+  type?: string;
+  provider?: string;
+  node_id?: string;
+  capability?: string;
+  page?: number;
+  page_size?: number;
+}
+```
+
+### `CloudRequestSessionInput`
+
+```typescript
+export interface CloudRequestSessionInput {
+  capability?: string;
+  device_id?: string;
+  node_id?: string;
+}
+```
+
+### `CloudExecuteInput`
+
+```typescript
+export interface CloudExecuteInput {
+  capability: string;
+  params?: Record<string, any>;
+  timeout_ms?: number;
+}
+```
+
+### `CloudCapabilitiesResponse`
+
+```typescript
+export interface CloudCapabilitiesResponse {
+  timestamp: number;
+  devices: CloudCapabilityDevice[];
+  pagination?: CloudCapabilitiesPagination;
+  filters?: {
+    q?: string;
+    type?: string;
+    provider?: string;
+    node_id?: string;
+    capability?: string;
+  };
+}
+```
+
+---
+
+## Full examples
+
+<CodeGroup>
+
+```typescript OahlClient — local node
+import { OahlClient } from '@oahl/sdk';
+
+const client = new OahlClient('http://localhost:3000');
+
+// Confirm the node is up
+await client.health();
+
+// Discover devices and pick one
+const devices = await client.getDevices();
+const device = devices[0];
+
+// Inspect available capabilities
+const capabilities = await client.getCapabilities(device.id);
+console.log(capabilities.map((c) => c.name));
+
+// Open a session
+const session = await client.startSession(device.id);
+
+// Execute a capability
+const result = await client.execute(session.id, 'camera.capture', {
+  resolution: '1080p',
+});
+console.log(result);
+
+// Check session state
+const state = await client.getSession(session.id);
+console.log(state.status);
+
+// Release the device
+await client.stopSession(session.id);
+```
+
+```typescript CloudClient — cloud relay
+import { CloudClient } from '@oahl/sdk';
+
+const cloud = new CloudClient('https://oahl.onrender.com', process.env.AGENT_API_KEY);
+
+// Search for devices with a camera capability
+const capabilities = await cloud.getCapabilities({
+  q: 'camera',
+  page: 1,
+  page_size: 25,
+});
+
+const device = capabilities.devices[0];
+console.log(`Found: ${device.id} on node ${device.node_id}`);
+
+// Request a brokered session
+const session = await cloud.requestSession({
+  device_id: device.id,
+  capability: 'camera.capture',
+});
+
+// Execute the capability through the relay
+const result = await cloud.execute(session.session_id, {
+  capability: 'camera.capture',
+  params: { resolution: '1080p' },
+  timeout_ms: 10000,
+});
+console.log(result);
+
+// Stop the cloud session
+const stopped = await cloud.stopSession(session.session_id);
+console.log(stopped.status);
+```
+
+</CodeGroup>

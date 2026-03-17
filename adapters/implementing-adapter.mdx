@@ -1,0 +1,292 @@
+---
+title: "Implementing an adapter"
+description: "Build a custom hardware adapter by implementing the OAHL Adapter interface."
+---
+
+Every OAHL adapter is a TypeScript class that implements the `Adapter` interface from `@oahl/core`. The interface has five required methods. Once you implement them, the OAHL node handles routing, session management, policy enforcement, and cloud relay — you only write the hardware logic.
+
+## The Adapter interface
+
+The full interface, as defined in `@oahl/core`:
+
+```typescript
+export interface Adapter {
+  id: string;                    // Unique adapter identifier
+  initialize(): Promise<void>;
+  healthCheck(): Promise<{ status: 'ok' | 'error'; message?: string }>;
+  getDevices(): Promise<Device[]>;
+  getCapabilities(deviceId: string): Promise<Capability[]>;
+  execute(deviceId: string, capabilityName: string, args: any): Promise<any>;
+}
+```
+
+### `id`
+
+A static string property that uniquely identifies this adapter within a node. Use the package slug, for example `'usb-camera'` or `'my-sensor'`.
+
+### `initialize(): Promise<void>`
+
+Called once by the node on startup. Use this to open hardware connections, load drivers, validate prerequisites, and set up internal state. Throw an error here if the hardware is unavailable and the adapter cannot function.
+
+### `healthCheck(): Promise<{ status: 'ok' | 'error'; message?: string }>`
+
+Called periodically by the node to verify the adapter is still healthy. Return `{ status: 'ok' }` when the hardware is reachable, or `{ status: 'error', message: '...' }` with a human-readable explanation when it is not.
+
+### `getDevices(): Promise<Device[]>`
+
+Returns the list of physical (or virtual) devices this adapter manages. Each device is an object matching the `Device` type.
+
+### `getCapabilities(deviceId: string): Promise<Capability[]>`
+
+Returns the capabilities available on the given device. Each capability includes a name, description, and JSON Schema for its arguments. This is how AI agents learn what your hardware can do.
+
+### `execute(deviceId: string, capabilityName: string, args: any): Promise<any>`
+
+Invokes a capability on a device. `args` is validated against the capability's schema before this method is called. Return the result as a plain JSON-serialisable object.
+
+---
+
+## Type descriptors
+
+### Device
+
+```typescript
+export interface Device {
+  id: string;              // Unique device ID within this node, e.g. 'camera-01'
+  type: string;            // Device class: 'camera', 'sensor', 'radio', 'mobile', etc.
+  name: string;            // Human-readable display name
+  isPublic: boolean;       // Whether remote agents can access this device
+  manufacturer?: string;
+  model?: string;
+  serial_number?: string;
+  metadata?: Record<string, any>;
+}
+```
+
+### Capability
+
+```typescript
+export interface Capability {
+  name: string;            // Dot-notation name, e.g. 'camera.capture'
+  description: string;     // Detailed explanation — this is what the AI agent reads
+  schema: any;             // JSON Schema for the args object
+  instructions?: string;   // Natural language instructions for AI agents (MCP style)
+  helper_url?: string;
+  template?: string;
+}
+```
+
+<Tip>
+  The `description` and `schema` fields are the primary interface between your hardware and AI agents. Write `description` as if explaining the capability to a developer who has never seen your device. The more precise the schema, the less likely an agent will call the capability with invalid arguments.
+</Tip>
+
+### Capability naming conventions
+
+Capability names must follow lowercase dot-notation: `<domain>.<action>`.
+
+| Domain | Examples |
+|--------|----------|
+| `camera` | `camera.capture`, `camera.stream` |
+| `radio` | `radio.scan`, `radio.capture` |
+| `sensor` | `sensor.read`, `sensor.read_temperature` |
+| `screen` | `screen.screenshot`, `screen.record` |
+| `system` | `system.info`, `system.shell` |
+
+Keep domains stable and use explicit verbs (`capture`, `scan`, `read`, `write`, `start`, `stop`). Version only when needed via suffix: `camera.capture.v2`.
+
+---
+
+## Complete annotated example
+
+The following example shows a complete adapter for a hypothetical vibration device. It demonstrates all five methods, proper error handling, and a JSON Schema-validated capability.
+
+```typescript src/index.ts
+import { Adapter, Device, Capability } from '@oahl/core';
+
+export default class MyVibratingAdapter implements Adapter {
+  // Unique identifier for this adapter within a node
+  id = 'my-vibrator';
+
+  async initialize(): Promise<void> {
+    // Open hardware connections here.
+    // Throw if the device is unavailable and cannot recover.
+    console.log('[my-vibrator] Driver initialized.');
+  }
+
+  async healthCheck(): Promise<{ status: 'ok' | 'error'; message?: string }> {
+    // Verify the hardware is reachable.
+    // For real hardware, attempt a lightweight probe here.
+    return { status: 'ok' };
+  }
+
+  async getDevices(): Promise<Device[]> {
+    // Return all devices this adapter manages.
+    // For USB/serial hardware, enumerate connected devices here.
+    return [
+      {
+        id: 'vibrator-01',
+        type: 'mobile',
+        name: 'Personal Phone',
+        isPublic: true
+      }
+    ];
+  }
+
+  async getCapabilities(deviceId: string): Promise<Capability[]> {
+    if (deviceId !== 'vibrator-01') {
+      throw new Error(`Device not found: ${deviceId}`);
+    }
+
+    return [
+      {
+        // Dot-notation: <domain>.<action>
+        name: 'phone.vibrate',
+        // AI agents read this to understand what the capability does.
+        description: 'Trigger a physical vibration on the phone for a specified duration.',
+        // JSON Schema validates args before execute() is called.
+        schema: {
+          type: 'object',
+          required: ['duration_ms'],
+          properties: {
+            duration_ms: {
+              type: 'number',
+              description: 'Duration of the vibration in milliseconds.',
+              minimum: 1,
+              maximum: 10000
+            }
+          }
+        }
+      }
+    ];
+  }
+
+  async execute(
+    deviceId: string,
+    capabilityName: string,
+    args: any
+  ): Promise<any> {
+    if (deviceId !== 'vibrator-01') {
+      throw new Error(`Device not found: ${deviceId}`);
+    }
+
+    if (capabilityName === 'phone.vibrate') {
+      // Replace with your actual hardware driver call:
+      // e.g., adb shell, serialport write, BLE characteristic write, etc.
+      console.log(`[my-vibrator] Vibrating for ${args.duration_ms}ms...`);
+
+      return {
+        success: true,
+        device_id: deviceId,
+        duration_ms: args.duration_ms,
+        timestamp: Date.now()
+      };
+    }
+
+    // Always throw for unknown capabilities — do not silently no-op.
+    throw new Error(`Capability not supported: ${capabilityName}`);
+  }
+}
+```
+
+---
+
+## Execution result format
+
+Return plain JSON-serialisable objects from `execute()`. For consistency across adapters, use the OAHL execution envelope schema:
+
+```json
+{
+  "schema_version": "1.0",
+  "operation_id": "cmd-123",
+  "status": "success",
+  "completion": { "done": true, "state": "completed" },
+  "capability": "phone.vibrate",
+  "device_id": "vibrator-01",
+  "timestamp": "2026-03-17T10:00:00.000Z",
+  "data": {
+    "duration_ms": 500
+  }
+}
+```
+
+For failures, include an `error` object:
+
+```json
+{
+  "status": "error",
+  "completion": { "done": true, "state": "failed" },
+  "error": {
+    "code": "DEVICE_BUSY",
+    "message": "Device is currently in use by another session.",
+    "retryable": true
+  }
+}
+```
+
+---
+
+## Error handling
+
+<Warning>
+  Never silently ignore errors or return partial results without indicating failure. Agents rely on the response to decide next steps — a silent failure will cause the agent to behave incorrectly.
+</Warning>
+
+Follow these practices:
+
+- **Unknown device**: throw `new Error('Device not found: <deviceId>')` from both `getCapabilities` and `execute`.
+- **Unknown capability**: throw `new Error('Capability not supported: <capabilityName>')` from `execute`.
+- **Hardware disconnected**: return `{ status: 'error', message: 'Device disconnected' }` from `healthCheck`, and throw from `execute` with a clear message.
+- **Transient failure**: include `retryable: true` in the error envelope so agents know they can retry.
+
+---
+
+## Optional: baseline fallback capability
+
+If your hardware has actions that are too numerous or dynamic to model individually, expose a `hardware.baseline` capability as a catch-all:
+
+```typescript
+{
+  name: 'hardware.baseline',
+  description: 'Fallback for hardware actions without a dedicated capability.',
+  schema: {
+    type: 'object',
+    required: ['intent'],
+    properties: {
+      intent: { type: 'string' },
+      params: { type: 'object' },
+      expected_output: { type: 'object' },
+      timeout_ms: { type: 'number', minimum: 1 }
+    }
+  }
+}
+```
+
+In `execute`, route the `intent` string to internal capability logic:
+
+```typescript
+if (capabilityName === 'hardware.baseline') {
+  const intent = String(args?.intent || '').toLowerCase();
+  if (intent.includes('vibrate')) {
+    return await this.execute(deviceId, 'phone.vibrate', args?.params || {});
+  }
+  return {
+    baseline: true,
+    handled: false,
+    intent: args?.intent,
+    message: 'Intent not mapped in this adapter.'
+  };
+}
+```
+
+---
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Scaffolding an adapter" icon="terminal" href="/adapters/scaffolding">
+    Generate a ready-to-edit adapter package with the OAHL CLI.
+  </Card>
+  <Card title="Publishing an adapter" icon="upload" href="/adapters/publishing">
+    Publish your adapter to npm and the OAHL Marketplace.
+  </Card>
+</CardGroup>

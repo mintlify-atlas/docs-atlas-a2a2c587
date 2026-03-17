@@ -1,0 +1,279 @@
+---
+title: "Tool and skill wrappers"
+description: "Wrap OAHL capabilities as callable tools that hide hardware complexity from your AI agent."
+---
+
+A tool wrapper turns an OAHL capability into a regular Python or TypeScript function that an LLM agent can call like any other tool. The agent only needs to know what the tool does and what parameters it accepts — all the session lifecycle, retry logic, and result parsing happen inside the wrapper.
+
+## Why the wrapper approach
+
+LLM agents reason about capabilities, not devices. An agent understands `capture_remote_image(country, resolution)` — it doesn't know or care what USB device path is on the hardware node. Wrappers enforce this separation:
+
+- **Capability-based interface** — tool names and parameters describe what the agent wants, not which device to use.
+- **Encapsulated session lifecycle** — the wrapper handles `requestSession`, `execute`, and `stopSession`. The agent can't accidentally leave a session open.
+- **Bounded retry logic** — the wrapper reads `agent_recovery_hints` from error responses and retries with corrected parameters before surfacing failure to the agent.
+- **Safe parameter surface** — only expose parameters you want the agent to control. Internal constraints (node selection, credentials) stay hidden.
+
+## Wrapper internals
+
+Every wrapper follows the same pattern:
+
+1. Call `POST /v1/requests` to reserve a session.
+2. Call `POST /v1/sessions/{id}/execute` with the capability and params.
+3. On error, check `error.agent_recovery_hints` and optionally retry.
+4. Call `POST /v1/sessions/{id}/stop` in a `finally` block.
+5. Return the result payload to the agent.
+
+## Full wrapper examples
+
+<CodeGroup>
+```python Python
+import os
+from oahl import CloudClient
+
+client = CloudClient(
+    base_url="https://oahl.onrender.com",
+    agent_api_key=os.environ["OAHL_AGENT_API_KEY"]
+)
+
+def capture_remote_image(country: str = "US", resolution: str = "1080p") -> dict:
+    """
+    Capture an image from an available remote camera in a specific country.
+    Returns the execution result payload from the hardware node.
+    """
+    session_id = None
+    try:
+        # 1. Reserve a camera that supports camera.capture in the requested region
+        session_req = client.request_session({
+            "capability": "camera.capture",
+            "constraints": {"country": country}
+        })
+        session_id = session_req["session_id"]
+
+        # 2. Execute the capture
+        result = client.execute(session_id, {
+            "capability": "camera.capture",
+            "params": {"resolution": resolution, "format": "jpg"},
+            "timeout_ms": 120000
+        })
+
+        # 3. Check for hardware-level error and apply recovery hints
+        if result.get("status") == "error":
+            hints = result.get("error", {}).get("agent_recovery_hints", [])
+            if hints:
+                # Surface hints to the caller so the agent can act on them
+                raise RuntimeError(
+                    f"Hardware error: {result['error']['message']}. "
+                    f"Recovery hints: {'; '.join(hints)}"
+                )
+            raise RuntimeError(result["error"]["message"])
+
+        return result
+
+    finally:
+        # 4. Always release the session
+        if session_id:
+            try:
+                client.stop_session(session_id)
+            except Exception:
+                pass  # Best-effort cleanup
+
+
+def scan_radio_spectrum(country: str, start_hz: int, end_hz: int) -> dict:
+    """Scan a radio frequency range from a remote SDR receiver."""
+    session_id = None
+    try:
+        session_req = client.request_session({
+            "capability": "radio.scan",
+            "constraints": {"country": country}
+        })
+        session_id = session_req["session_id"]
+
+        result = client.execute(session_id, {
+            "capability": "radio.scan",
+            "params": {"start_hz": start_hz, "end_hz": end_hz},
+            "timeout_ms": 60000
+        })
+        return result
+    finally:
+        if session_id:
+            try:
+                client.stop_session(session_id)
+            except Exception:
+                pass
+
+
+def read_remote_sensor(sensor_type: str, location: str = "") -> dict:
+    """Read environmental data from a remote IoT sensor."""
+    session_id = None
+    try:
+        query = {"capability": f"sensor.{sensor_type}"}
+        if location:
+            query["constraints"] = {"location": location}
+
+        session_req = client.request_session(query)
+        session_id = session_req["session_id"]
+
+        result = client.execute(session_id, {
+            "capability": f"sensor.{sensor_type}",
+            "params": {},
+            "timeout_ms": 30000
+        })
+        return result
+    finally:
+        if session_id:
+            try:
+                client.stop_session(session_id)
+            except Exception:
+                pass
+```
+
+```typescript TypeScript
+import { CloudClient } from "@oahl/sdk";
+
+const client = new CloudClient(
+  "https://oahl.onrender.com",
+  process.env.OAHL_AGENT_API_KEY
+);
+
+export async function captureRemoteImage(
+  country: string = "US",
+  resolution: "720p" | "1080p" | "4k" = "1080p"
+): Promise<unknown> {
+  let sessionId: string | undefined;
+  try {
+    // 1. Reserve a camera that supports camera.capture
+    const sessionReq = await client.requestSession({
+      capability: "camera.capture"
+    });
+    sessionId = sessionReq.session_id;
+
+    // 2. Execute the capture
+    const result = await client.execute(sessionId, {
+      capability: "camera.capture",
+      params: { resolution, format: "jpg", country },
+      timeout_ms: 120000
+    });
+
+    // 3. Check for hardware-level error and surface recovery hints
+    if (result.status === "error") {
+      const hints: string[] = result.error?.agent_recovery_hints ?? [];
+      const hintsMsg = hints.length ? ` Recovery hints: ${hints.join("; ")}` : "";
+      throw new Error(`Hardware error: ${result.error?.message}.${hintsMsg}`);
+    }
+
+    return result;
+  } finally {
+    // 4. Always release the session
+    if (sessionId) {
+      await client.stopSession(sessionId).catch(() => {});
+    }
+  }
+}
+
+export async function scanRadioSpectrum(
+  country: string,
+  startHz: number,
+  endHz: number
+): Promise<unknown> {
+  let sessionId: string | undefined;
+  try {
+    const sessionReq = await client.requestSession({ capability: "radio.scan" });
+    sessionId = sessionReq.session_id;
+
+    return await client.execute(sessionId, {
+      capability: "radio.scan",
+      params: { start_hz: startHz, end_hz: endHz, country },
+      timeout_ms: 60000
+    });
+  } finally {
+    if (sessionId) await client.stopSession(sessionId).catch(() => {});
+  }
+}
+
+export async function readRemoteSensor(
+  sensorType: "temperature" | "humidity" | "soil_moisture" | "air_quality",
+  location?: string
+): Promise<unknown> {
+  let sessionId: string | undefined;
+  try {
+    const sessionReq = await client.requestSession({
+      capability: `sensor.${sensorType}`
+    });
+    sessionId = sessionReq.session_id;
+
+    return await client.execute(sessionId, {
+      capability: `sensor.${sensorType}`,
+      params: location ? { location } : {},
+      timeout_ms: 30000
+    });
+  } finally {
+    if (sessionId) await client.stopSession(sessionId).catch(() => {});
+  }
+}
+```
+</CodeGroup>
+
+## Using agent_recovery_hints
+
+When a hardware execution fails, the OAHL API may return `error.agent_recovery_hints` — a list of natural-language instructions from the hardware provider describing how to recover. These hints are designed to be acted on by the calling agent autonomously.
+
+```json
+{
+  "status": "error",
+  "completion": { "done": true, "state": "failed" },
+  "capability": "camera.capture",
+  "device_id": "cam-gh-01",
+  "error": {
+    "code": "EXECUTION_FAILED",
+    "message": "Exposure timeout at requested resolution.",
+    "retryable": true,
+    "agent_recovery_hints": [
+      "Reduce resolution to 720p and retry.",
+      "Switch format from jpg to png."
+    ]
+  }
+}
+```
+
+A well-behaved wrapper reads these hints and retries with corrected parameters before surfacing failure to the agent. Keep retries bounded — retry at most once or twice per hint.
+
+## Providing tools to an LLM
+
+Once your wrappers are written, register them as tools in your LLM framework. The `skills/tools.json` file in the OAHL repository shows the OpenAI-compatible function schema:
+
+```json
+[
+  {
+    "type": "function",
+    "function": {
+      "name": "capture_remote_image",
+      "description": "Capture an image from an available remote camera in a specific region.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "country": {
+            "type": "string",
+            "description": "The country to source the camera from (e.g., 'US', 'GH')."
+          },
+          "resolution": {
+            "type": "string",
+            "enum": ["720p", "1080p", "4k"],
+            "description": "The desired image resolution."
+          }
+        },
+        "required": ["country", "resolution"]
+      }
+    }
+  }
+]
+```
+
+## Best practices
+
+- **Keep tools capability-based, not device-based.** The agent should call `capture_remote_image`, not `use_device_dev_video0`.
+- **Expose only safe parameters.** Keep internal constraints like `node_id` or device selection hidden inside the wrapper.
+- **Always handle session cleanup.** Use `finally` blocks — a leaked session locks the device for other agents.
+- **Handle busy and unavailable states.** A `404` on `/v1/requests` means no matching device is available right now. Surface a clear message rather than crashing.
+- **Keep retries bounded.** Acting on `agent_recovery_hints` is good; infinite retry loops are not.
+- **Log all requests.** Include `session_id` and `operation_id` in your logs for debugging.

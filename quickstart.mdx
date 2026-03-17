@@ -1,80 +1,249 @@
 ---
 title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+description: "Connect your first hardware device to the OAHL network in minutes."
 ---
 
-## Get started in three steps
+## Prerequisites
 
-Get your documentation site running locally and make your first customization.
+Before you begin, make sure you have the following installed:
 
-### Step 1: Set up your local environment
+- **Node.js** v18 or later
+- **npm** v9 or later
 
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
+<Tip>
+  Not sure which Node.js version you have? Run `node --version` in your terminal. If you need to install Node.js, download it from [nodejs.org](https://nodejs.org).
+</Tip>
 
-### Step 2: Deploy your changes
+## Install and connect
 
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
+<Steps>
+  <Step title="Install the OAHL CLI">
+    Install the OAHL toolkit globally via npm:
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
+    ```bash
+    npm install -g @fredabila/oahl
+    ```
 
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
+    This installs the `oahl` command, which manages node setup, adapter plugins, configuration, and starting your local daemon.
+  </Step>
 
-### Step 3: Go live
+  <Step title="Log in to the Developer Portal">
+    Link this machine to your OAHL account. The CLI will prompt for your registered email address and your 6-digit PIN:
 
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
+    ```bash
+    oahl login
+    ```
+
+    ```
+    🔐 Provider Authentication Required
+    Enter your Developer Portal credentials to link this node to your account.
+
+    ✔ Email Address: you@example.com
+    ✔ 6-Digit PIN: ••••••
+    ✔ Remember these credentials on this machine? yes
+
+    ✨ Successfully logged in as you@example.com
+    ```
+
+    <Note>
+      Credentials are saved to `.oahl-session.json` in your working directory. Run `oahl logout` to remove them from this machine.
+    </Note>
+  </Step>
+
+  <Step title="Run the setup wizard">
+    Generate your `oahl-config.json` by answering a few questions about your node and hardware:
+
+    ```bash
+    oahl init
+    ```
+
+    The wizard will ask:
+
+    - **Node ID** — a unique identifier for this machine (e.g. `my-laptop-01`)
+    - **Provider name** — a human-readable label (e.g. `Accra Test Lab`)
+    - **First device type** — choose from USB Camera, RTL-SDR Radio, Mock/Virtual Sensor, or skip
+
+    ```
+    🤖 Welcome to the OAHL Node Setup Wizard!
+
+    ✔ What is the unique ID for this node? my-laptop-01
+    ✔ What is your provider name? Accra Test Lab
+    ✔ What type of hardware device are you connecting first? USB Camera
+    ✔ Enter an ID for your camera: camera-01
+    ✔ Should this device be public (usable by remote agents)? no
+
+    ✅ Successfully generated configuration at: /home/user/oahl-config.json
+    ```
+
+    <Tip>
+      Not sure what hardware you have connected? Run `oahl scan-ports` before `oahl init` to detect USB and serial devices and get adapter suggestions with config snippets.
+    </Tip>
+  </Step>
+
+  <Step title="Review oahl-config.json">
+    Open the generated `oahl-config.json` and confirm it looks correct. A typical configuration file looks like this:
+
+    ```json oahl-config.json
+    {
+      "node_id": "my-laptop-01",
+      "cloud_url": "https://oahl.onrender.com",
+      "provider_api_key": "123456",
+      "plugins": [
+        "@oahl/adapter-mock",
+        "@oahl/adapter-usb-camera"
+      ],
+      "provider": {
+        "name": "My Personal Test Node"
+      },
+      "baseline_capability": {
+        "enabled": true,
+        "name": "hardware.baseline",
+        "helper_url": "https://example.com/hardware-helper",
+        "template": "Describe action, safety limits, and expected result when direct capability is missing."
+      },
+      "devices": [
+        {
+          "id": "usb-cam-1",
+          "type": "camera",
+          "adapter": "usb-camera",
+          "capabilities": [
+            "camera.capture"
+          ],
+          "baseline_capability": {
+            "enabled": true,
+            "helper_url": "https://example.com/camera-helper",
+            "template": "When no direct capability exists, generate camera workflow steps from intent and params."
+          }
+        }
+      ]
+    }
+    ```
+
+    Key fields to verify:
+
+    | Field | Description |
+    |-------|-------------|
+    | `node_id` | Unique identifier for this node on the network |
+    | `cloud_url` | The Cloud Registry endpoint your node registers with |
+    | `provider_api_key` | Your account's API key from the Developer Portal |
+    | `plugins` | Adapter packages loaded at startup |
+    | `devices` | Hardware devices exposed by this node |
+
+    <Warning>
+      Replace `provider_api_key` with your real key from the Developer Portal before going live. The default value `"123456"` is a placeholder generated by `oahl init`.
+    </Warning>
+
+    To run in fully local/offline mode, set `cloud_url` to an empty string. The node will skip cloud registration and only serve agents on your LAN:
+
+    ```json
+    {
+      "node_id": "my-local-lab",
+      "cloud_url": "",
+      "devices": []
+    }
+    ```
+  </Step>
+
+  <Step title="Start the node">
+    <CodeGroup>
+
+    ```bash npm
+    oahl start
+    ```
+
+    ```yaml docker-compose.yml
+    version: '3.8'
+
+    services:
+      oahl-node:
+        image: fredabila/oahl-node:latest
+        container_name: oahl-node
+        restart: unless-stopped
+        ports:
+          - "3000:3000"
+        environment:
+          - PORT=3000
+        volumes:
+          - ./oahl-config.json:/app/packages/server/oahl-config.json
+        privileged: true
+        # devices:
+          # Uncomment to pass hardware directly to the container:
+          # - /dev/bus/usb:/dev/bus/usb
+          # - /dev/ttyACM0:/dev/ttyACM0  # For Arduino
+          # - /dev/video0:/dev/video0    # For Webcams
+    ```
+
+    ```bash docker run
+    docker run -d \
+      --name oahl-node \
+      -p 8080:8080 \
+      -v $(pwd)/oahl-config.json:/app/oahl-config.json \
+      --device=/dev/video0 \
+      oahl/node:latest
+    ```
+
+    </CodeGroup>
+
+    <Note>
+      Docker is recommended for adapters that require native C++ bindings (e.g. `serialport` for serial/BLE devices). Running via `npm` may require installing build tools like `python`, `make`, or Visual Studio C++ Build Tools on your host OS. The Docker image ships with all build dependencies pre-installed.
+    </Note>
+
+    `oahl start` accepts the following flags:
+
+    | Flag | Default | Description |
+    |------|---------|-------------|
+    | `-p, --port <number>` | `3000` | Port to run the HTTP server on |
+    | `-c, --config <path>` | `./oahl-config.json` | Path to the config file |
+  </Step>
+
+  <Step title="Verify the node is running">
+    Once started, the node exposes a REST API. Confirm it is running by calling the capabilities endpoint:
+
+    ```bash
+    curl http://localhost:3000/v1/capabilities
+    ```
+
+    You should receive a JSON response listing the devices and capabilities declared in your config.
+
+    <Tip>
+      You can also open the TUI at any time to inspect or edit your running configuration without editing the JSON file directly:
+
+      ```bash
+      oahl tui
+      ```
+    </Tip>
+  </Step>
+</Steps>
+
+## Install additional adapters
+
+You can install hardware adapters at any time using `oahl install`. This downloads the package and automatically adds it to the `plugins` list in your config:
+
+```bash
+oahl install @oahl/adapter-rtl-sdr
+```
+
+To remove an adapter:
+
+```bash
+oahl remove @oahl/adapter-rtl-sdr
+```
+
+Restart your node after installing or removing adapters for the changes to take effect.
 
 ## Next steps
 
-Now that you have your docs running, explore these key features:
-
 <CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
+  <Card title="Architecture" icon="sitemap" href="/architecture">
+    Understand how nodes, adapters, the Cloud Registry, and agents fit together.
+  </Card>
+  <Card title="Hardware owner guide" icon="microchip" href="/hardware-owners/setup">
+    In-depth guide for registering devices, writing policies, and managing sessions.
+  </Card>
+  <Card title="Adapter guide" icon="plug" href="/adapters/overview">
+    Build a custom adapter for hardware not covered by first-party plugins.
+  </Card>
+  <Card title="Agent integration" icon="robot" href="/agents/overview">
+    Connect an AI agent to OAHL hardware using the JavaScript or Python SDK.
+  </Card>
 </CardGroup>
-
-<Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
-</Note>

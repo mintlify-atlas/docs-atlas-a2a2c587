@@ -1,0 +1,79 @@
+---
+title: "Adapter overview"
+description: "Adapters are the plugins that connect OAHL to specific hardware devices. Learn how they work and what's available."
+---
+
+An adapter is a Node.js package that translates OAHL standard capability calls into hardware-specific protocol operations. When an AI agent executes `camera.capture` through the OAHL API, an adapter is what turns that request into a concrete V4L2 system call, an ADB command, or a serial write — and returns the result back in a structured format the agent can use.
+
+Adapters are loaded by the OAHL node at startup via the `plugins` array in `oahl-config.json`. Each adapter implements the 5-method `Adapter` interface from `@oahl/core` and is the sole owner of the hardware it manages.
+
+## How adapters fit in
+
+```
+AI Agent  →  OAHL Node  →  Adapter  →  Physical Hardware
+                           (translate capability calls
+                            to hardware protocol ops)
+```
+
+The node calls `adapter.initialize()` once on startup, then routes incoming capability execution requests to the matching adapter's `execute()` method. The adapter owns device discovery (`getDevices`), capability declaration (`getCapabilities`), and all hardware I/O.
+
+## Loading adapters via oahl-config.json
+
+Adapters are installed as npm packages and declared in the `plugins` array of your node configuration:
+
+```json oahl-config.json
+{
+  "node_id": "my-node-01",
+  "plugins": [
+    "@oahl/adapter-mock",
+    "@oahl/adapter-usb-camera"
+  ]
+}
+```
+
+The OAHL CLI's `oahl install` command handles both npm installation and config registration in one step:
+
+```bash
+oahl install @oahl/adapter-usb-camera
+```
+
+<Note>
+  Each adapter package must export its adapter class as the **default export** from its main entry point. The node uses `require()` to load the module and resolves the class automatically.
+</Note>
+
+## First-party adapters
+
+<CardGroup cols={2}>
+  <Card title="@oahl/adapter-mock" icon="flask" href="https://www.npmjs.com/package/@oahl/adapter-mock">
+    A fully simulated hardware adapter for testing OAHL core and client SDKs without any physical devices. Exposes `mock.ping` and `mock.echo` capabilities plus a `hardware.baseline` fallback.
+  </Card>
+  <Card title="@oahl/adapter-usb-camera" icon="camera" href="https://www.npmjs.com/package/@oahl/adapter-usb-camera">
+    USB camera adapter using V4L2 on Linux. Exposes `camera.capture` for still images and `camera.stream` for live video. Featured adapter.
+  </Card>
+  <Card title="@oahl/adapter-rtl-sdr" icon="radio" href="https://www.npmjs.com/package/@oahl/adapter-rtl-sdr">
+    Software-defined radio adapter for RTL2832U-based USB dongles. Exposes `radio.scan` and `radio.capture` for spectrum analysis. Featured adapter.
+  </Card>
+  <Card title="@oahl/adapter-android" icon="mobile" href="https://www.npmjs.com/package/@oahl/adapter-android">
+    Full-coverage adapter for Android devices over ADB. Exposes 60+ capabilities spanning camera, sensors, UI automation, SMS, screen recording, file transfer, and system controls.
+  </Card>
+</CardGroup>
+
+## Adapter registry and marketplace
+
+The [OAHL Marketplace](https://oahl.org/marketplace) lists all community and first-party adapters. It is powered by a crawler-based registry: when you publish an adapter to npm with an `oahl-manifest.json` file and add your package name to `adapters.txt` in the registry repository, the crawler automatically extracts your adapter's metadata and makes it discoverable.
+
+You never manually edit the central registry JSON — just publish to npm and open a one-line PR.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Implementing an adapter" icon="code" href="/adapters/implementing-adapter">
+    Build a custom adapter by implementing the full Adapter interface.
+  </Card>
+  <Card title="Scaffolding an adapter" icon="terminal" href="/adapters/scaffolding">
+    Use the OAHL CLI to scaffold a ready-to-edit adapter package in seconds.
+  </Card>
+  <Card title="Publishing an adapter" icon="upload" href="/adapters/publishing">
+    Share your adapter with the community on npm and the OAHL Marketplace.
+  </Card>
+</CardGroup>

@@ -1,0 +1,143 @@
+---
+title: "List capabilities"
+description: "Discover available hardware devices and their capabilities via GET /v1/capabilities."
+---
+
+## `GET /v1/capabilities`
+
+Returns all hardware devices visible to the calling agent. Access policy (`visibility`, `allowed_agents`, `allowed_orgs`) is enforced server-side based on the bearer token and optional agent identity headers.
+
+### Authentication
+
+Requires an **agent API key** as a bearer token. See [Authentication](/api/authentication).
+
+### Query parameters
+
+<ParamField query="q" type="string">
+  Free-text search across device ID, type, provider name, and capability names.
+</ParamField>
+
+<ParamField query="type" type="string">
+  Filter by device type. Examples: `camera`, `sensor`, `radio`, `mobile`.
+</ParamField>
+
+<ParamField query="provider" type="string">
+  Filter by provider name (exact match).
+</ParamField>
+
+<ParamField query="node_id" type="string">
+  Restrict results to a specific hardware node.
+</ParamField>
+
+<ParamField query="capability" type="string">
+  Filter to devices that expose a specific capability name (partial match). Example: `camera.capture`.
+</ParamField>
+
+<ParamField query="page" type="integer" default="1">
+  Page number (1-indexed). Minimum: `1`.
+</ParamField>
+
+<ParamField query="page_size" type="integer" default="25">
+  Number of results per page. Minimum: `1`, maximum: `100`.
+</ParamField>
+
+### Request headers (optional)
+
+| Header | Description |
+|--------|-------------|
+| `x-agent-id` | Self-asserted agent identifier for access policy evaluation |
+| `x-agent-org-id` | Self-asserted organisation ID for access policy evaluation |
+| `x-agent-roles` | Comma-separated role list for access policy evaluation |
+
+### Example request
+
+```bash
+curl 'https://oahl.onrender.com/v1/capabilities?type=camera&page=1&page_size=10' \
+  -H "Authorization: Bearer oahl_agent_abc123..."
+```
+
+### Response
+
+**`200 OK`**
+
+```json
+{
+  "timestamp": 1742212800000,
+  "devices": [
+    {
+      "id": "cam-01",
+      "type": "camera",
+      "name": "USB Camera (Front)",
+      "provider": "acme-lab",
+      "node_id": "node-abc123",
+      "manufacturer": "Logitech",
+      "model": "C920",
+      "serial_number": "SN-001",
+      "status": "available",
+      "semantic_context": ["https://www.w3.org/2019/wot/td/v1"],
+      "capabilities": [
+        {
+          "name": "camera.capture",
+          "description": "Capture a still image from the camera.",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "resolution": { "type": "string", "enum": ["720p", "1080p"] },
+              "format": { "type": "string", "enum": ["jpeg", "png"] }
+            }
+          },
+          "instructions": "Call this to take a photo. Pass resolution and format as needed.",
+          "semantic_type": "ActionAffordance"
+        }
+      ],
+      "access_policy": {
+        "visibility": "public"
+      }
+    }
+  ],
+  "pagination": {
+    "page": 1,
+    "page_size": 10,
+    "total": 1,
+    "total_pages": 1,
+    "has_next": false,
+    "has_prev": false
+  },
+  "filters": {
+    "type": "camera"
+  }
+}
+```
+
+**`401 Unauthorized`**
+
+```json
+{ "error": "Unauthorized" }
+```
+
+### Response fields
+
+<ResponseField name="timestamp" type="integer">
+  Unix epoch milliseconds at the time the response was generated.
+</ResponseField>
+
+<ResponseField name="devices" type="DeviceDescriptor[]">
+  Array of device objects visible to the calling agent. See [DeviceDescriptor](/api/schemas/device-descriptor).
+</ResponseField>
+
+<ResponseField name="pagination" type="object">
+  Pagination metadata.
+
+  <Expandable title="pagination fields">
+    <ResponseField name="page" type="integer">Current page number.</ResponseField>
+    <ResponseField name="page_size" type="integer">Number of results per page.</ResponseField>
+    <ResponseField name="total" type="integer">Total number of matching devices.</ResponseField>
+    <ResponseField name="total_pages" type="integer">Total number of pages.</ResponseField>
+    <ResponseField name="has_next" type="boolean">Whether a next page exists.</ResponseField>
+    <ResponseField name="has_prev" type="boolean">Whether a previous page exists.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="filters" type="object">
+  Echo of the active filter parameters applied to the query.
+</ResponseField>

@@ -1,0 +1,85 @@
+---
+title: "API overview"
+description: "The OAHL REST API enables AI agents to discover hardware, manage sessions, and execute capabilities."
+---
+
+The OAHL API is a REST API over HTTPS (or HTTP for local nodes). All request and response bodies use `application/json`. The API is versioned under the `/v1/` path prefix.
+
+## Base URLs
+
+| Environment | Base URL | Use case |
+|-------------|----------|----------|
+| Local node | `http://localhost:3000` | Direct access to a node on your local machine |
+| Cloud relay | `https://oahl.onrender.com` | Remote hardware discovery and relay via the OAHL cloud registry |
+
+## API version
+
+The current API version is **v1**. All endpoints are prefixed with `/v1/`.
+
+## Content type
+
+All endpoints accept and return `application/json`. Set the `Content-Type` header on all `POST` requests:
+
+```http
+Content-Type: application/json
+```
+
+## Authentication
+
+All endpoints require a bearer token in the `Authorization` header. Two token types exist depending on which endpoint group you are calling:
+
+- **Agent API key** — for agent-facing endpoints (`/v1/capabilities`, `/v1/requests`, `/v1/sessions/*`)
+- **Provider API key** — for provider endpoints (`/v1/provider/*`)
+
+See [Authentication](/api/authentication) for full details.
+
+## Response envelope
+
+Successful responses return a JSON object whose shape is defined per endpoint. Execution endpoints return the [ExecutionResult](/api/schemas/execution-result) envelope.
+
+## Error responses
+
+All error responses use a consistent shape:
+
+```json
+{
+  "error": "Human-readable error description"
+}
+```
+
+HTTP status codes follow standard semantics:
+
+| Code | Meaning |
+|------|---------|
+| `200` | Success |
+| `204` | No content (used by long-poll when no commands are pending) |
+| `400` | Bad request — missing or invalid parameters |
+| `401` | Unauthorized — missing or invalid bearer token |
+| `403` | Forbidden — authenticated but not permitted to access this resource |
+| `404` | Not found — session, device, or node does not exist |
+| `504` | Gateway timeout — hardware node did not respond within the timeout window |
+
+## Relay mode headers
+
+Execution endpoints return two response headers that describe the transport path used:
+
+| Header | Values | Description |
+|--------|--------|-------------|
+| `x-oahl-relay-mode` | `websocket`, `websocket-late`, `polling`, `websocket-timeout`, `polling-timeout` | Which relay transport carried the result |
+| `x-oahl-request-id` | `string` | Opaque identifier for the dispatched command, useful for debugging |
+
+See [WebSocket relay](/api/websocket) for details on relay modes.
+
+## All endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/v1/capabilities` | Discover available hardware devices and capabilities |
+| `POST` | `/v1/requests` | Reserve an exclusive session on a device |
+| `POST` | `/v1/sessions/{session_id}/execute` | Execute a single capability within a session |
+| `POST` | `/v1/sessions/{session_id}/execute-batch` | Execute multiple capabilities sequentially in one call |
+| `POST` | `/v1/sessions/{session_id}/stop` | Release a session and free the device |
+| `POST` | `/v1/provider/nodes/register` | Register or heartbeat a hardware node |
+| `GET` | `/v1/provider/nodes/{id}/poll` | Long-poll for pending commands (HTTP fallback) |
+| `POST` | `/v1/provider/nodes/results` | Submit an execution result to the cloud (HTTP fallback) |
+| `WS` | `/ws/provider` | WebSocket relay for real-time bidirectional command dispatch |

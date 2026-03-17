@@ -1,0 +1,87 @@
+---
+title: "Authentication"
+description: "All OAHL API endpoints require bearer token authentication."
+---
+
+The OAHL API uses bearer token authentication for all endpoints. You pass your API key in the `Authorization` HTTP header with every request.
+
+## Bearer token format
+
+```http
+Authorization: Bearer <api_key>
+```
+
+## Token types
+
+Two separate token types exist, one for each endpoint group:
+
+### Agent API key
+
+Used to call agent-facing endpoints:
+
+- `GET /v1/capabilities`
+- `POST /v1/requests`
+- `POST /v1/sessions/{session_id}/execute`
+- `POST /v1/sessions/{session_id}/execute-batch`
+- `POST /v1/sessions/{session_id}/stop`
+
+Obtain an agent API key from the [OAHL cloud portal](https://oahl.onrender.com).
+
+### Provider API key
+
+Used by hardware nodes to call provider endpoints:
+
+- `POST /v1/provider/nodes/register`
+- `GET /v1/provider/nodes/{id}/poll`
+- `POST /v1/provider/nodes/results`
+- `wss://<host>/ws/provider` (WebSocket connection header)
+
+The provider API key is configured in your node's `oahl-config.json` and is used automatically by the OAHL node process.
+
+<Warning>
+  Do not use an agent API key on provider endpoints, or a provider API key on agent endpoints. The server validates which key type is appropriate for each endpoint group.
+</Warning>
+
+## Example request
+
+```bash
+curl https://oahl.onrender.com/v1/capabilities \
+  -H "Authorization: Bearer oahl_agent_abc123..."
+```
+
+## Optional agent identity headers
+
+Agent-facing endpoints optionally accept three self-asserted identity headers. The server uses these for device access-policy enforcement (for example, `shared` visibility devices may restrict access to specific agent IDs or organisations).
+
+| Header | Type | Description |
+|--------|------|-------------|
+| `x-agent-id` | `string` | Stable identifier for the calling agent or owner |
+| `x-agent-org-id` | `string` | Organisation the agent belongs to |
+| `x-agent-roles` | `string` | Comma-separated list of agent roles |
+
+```bash
+curl https://oahl.onrender.com/v1/capabilities \
+  -H "Authorization: Bearer oahl_agent_abc123..." \
+  -H "x-agent-id: agent-my-robot-001" \
+  -H "x-agent-org-id: acme-corp" \
+  -H "x-agent-roles: operator,viewer"
+```
+
+<Note>
+  In v1, agent identity headers are **self-asserted** and are not cryptographically bound to the bearer token. Any agent can claim any identity. Treat access policy enforcement as advisory rather than a security boundary in v1.
+</Note>
+
+## Error responses
+
+| Status | Condition |
+|--------|-----------|
+| `401 Unauthorized` | The `Authorization` header is missing, malformed, or the token is invalid/expired |
+| `403 Forbidden` | The token is valid but the agent identity (via `x-agent-id` / `x-agent-org-id` / `x-agent-roles`) is not permitted to access the requested resource |
+
+```json
+{ "error": "Unauthorized" }
+```
+
+```json
+{ "error": "Agent does not have access to this device" }
+```

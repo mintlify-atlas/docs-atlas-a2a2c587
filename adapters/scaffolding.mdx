@@ -1,0 +1,236 @@
+---
+title: "Scaffolding an adapter"
+description: "Use the OAHL CLI to scaffold, build, and test a new adapter package in seconds."
+---
+
+The `oahl create-adapter` command generates a complete, ready-to-edit adapter package with the correct file structure, `package.json`, `tsconfig.json`, and a working TypeScript implementation of the `Adapter` interface. You only need to replace the placeholder capability logic with your hardware's driver code.
+
+<Steps>
+
+<Step title="Create the scaffold">
+
+Run `oahl create-adapter` with a name for your adapter. The name can be any slug — the CLI normalises it automatically:
+
+```bash
+oahl create-adapter my-sensor
+```
+
+This creates a new directory called `adapter-my-sensor/` in the current directory with the following structure:
+
+```
+adapter-my-sensor/
+├── src/
+│   └── index.ts        # Your adapter class — edit this
+├── package.json
+├── tsconfig.json
+└── README.md
+```
+
+<Note>
+  If you pass a name starting with `@`, the CLI strips the scope prefix and derives the class name from the remainder. For example, `oahl create-adapter my-sensor` produces the class `AdapterMySensorAdapter` and the package name `@oahl/adapter-my-sensor`.
+</Note>
+
+</Step>
+
+<Step title="Review the generated files">
+
+The scaffold writes three files. Here is what each one contains:
+
+**`src/index.ts`** — the adapter class with all five required methods stubbed out:
+
+```typescript src/index.ts
+import { Adapter, Device, Capability } from '@oahl/core';
+
+export default class AdapterMySensorAdapter implements Adapter {
+  id = 'adapter-my-sensor';
+
+  async initialize(): Promise<void> {
+    console.log('[adapter-my-sensor] Initialized');
+  }
+
+  async healthCheck(): Promise<{ status: 'ok' | 'error'; message?: string }> {
+    return { status: 'ok' };
+  }
+
+  async getDevices(): Promise<Device[]> {
+    return [
+      {
+        id: 'adapter-my-sensor-device-01',
+        type: 'custom',
+        name: 'AdapterMySensorAdapter Device',
+        isPublic: false
+      }
+    ];
+  }
+
+  async getCapabilities(deviceId: string): Promise<Capability[]> {
+    if (deviceId !== 'adapter-my-sensor-device-01') {
+      throw new Error('Device not found');
+    }
+
+    return [
+      {
+        name: 'custom.ping',
+        description: 'Smoke-test capability for this adapter',
+        schema: {
+          type: 'object',
+          properties: {
+            message: { type: 'string' }
+          }
+        }
+      }
+    ];
+  }
+
+  async execute(deviceId: string, capabilityName: string, args: any): Promise<any> {
+    if (deviceId !== 'adapter-my-sensor-device-01') {
+      throw new Error('Device not found');
+    }
+
+    if (capabilityName === 'custom.ping') {
+      return {
+        ok: true,
+        adapter: this.id,
+        message: args?.message || 'pong',
+        timestamp: Date.now()
+      };
+    }
+
+    throw new Error('Capability not supported');
+  }
+}
+```
+
+**`package.json`** — declares `@oahl/core` as a peer dependency:
+
+```json package.json
+{
+  "name": "@oahl/adapter-my-sensor",
+  "version": "0.1.0",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js"
+  },
+  "peerDependencies": {
+    "@oahl/core": "*"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0",
+    "@types/node": "^20.10.0"
+  }
+}
+```
+
+**`tsconfig.json`** — targets ES6/CommonJS output in `dist/`:
+
+```json tsconfig.json
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "declaration": true
+  },
+  "include": ["src/**/*"]
+}
+```
+
+</Step>
+
+<Step title="Install dependencies">
+
+Navigate into the generated directory and install:
+
+```bash
+cd adapter-my-sensor
+npm install
+```
+
+This installs `@oahl/core`, TypeScript, and `@types/node` from `devDependencies`. Add any hardware-specific npm packages your driver needs at this point.
+
+</Step>
+
+<Step title="Implement your hardware logic">
+
+Open `src/index.ts` and replace the placeholder content with your real hardware driver code:
+
+- In `initialize()`, open connections to your hardware (serial port, USB handle, network socket, etc.).
+- In `getDevices()`, enumerate connected devices dynamically or return a static list.
+- In `getCapabilities()`, declare the operations your hardware supports with accurate JSON Schemas.
+- In `execute()`, call your hardware driver and return a structured result.
+- In `healthCheck()`, perform a lightweight probe to verify the hardware is still reachable.
+
+<Tip>
+  Use `oahl scan-ports` to list detected USB and serial devices on the current machine. It also suggests which adapter package to use and generates a config snippet for each detected device.
+</Tip>
+
+</Step>
+
+<Step title="Build the adapter">
+
+Compile TypeScript to JavaScript:
+
+```bash
+npm run build
+```
+
+The compiled output lands in `dist/`. The `main` field in `package.json` points to `dist/index.js`, which is what the OAHL node loads.
+
+</Step>
+
+<Step title="Install into your OAHL workspace">
+
+From your OAHL node workspace directory, install the adapter and register it in `oahl-config.json` in one command:
+
+```bash
+oahl install @oahl/adapter-my-sensor
+```
+
+If you are developing locally and haven't published yet, install from the local path:
+
+```bash
+npm install ./path/to/adapter-my-sensor
+```
+
+Then add it manually to `oahl-config.json`:
+
+```json oahl-config.json
+{
+  "plugins": [
+    "@oahl/adapter-my-sensor"
+  ]
+}
+```
+
+</Step>
+
+<Step title="Run the conformance test">
+
+Verify your adapter correctly implements the OAHL interface before deploying:
+
+```bash
+oahl conformance @oahl/adapter-my-sensor
+```
+
+The conformance runner calls `initialize`, `healthCheck`, `getDevices`, `getCapabilities`, and `execute` against your adapter and checks that responses match the expected types. A passing run confirms your adapter is compatible with the OAHL node.
+
+<Warning>
+  The conformance test must pass before you submit your adapter to the registry. Adapters that fail conformance will not be listed on the Marketplace.
+</Warning>
+
+</Step>
+
+</Steps>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Implementing an adapter" icon="code" href="/adapters/implementing-adapter">
+    Deep-dive into the Adapter interface, type descriptors, and error handling.
+  </Card>
+  <Card title="Publishing an adapter" icon="upload" href="/adapters/publishing">
+    Publish to npm and list your adapter on the OAHL Marketplace.
+  </Card>
+</CardGroup>

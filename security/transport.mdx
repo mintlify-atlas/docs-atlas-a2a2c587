@@ -1,0 +1,173 @@
+---
+title: "Transport security"
+description: "Transport plugins and secure communication patterns for OAHL nodes."
+---
+
+OAHL supports a wide range of physical and network transports for connecting hardware to nodes. Each transport family has different security properties. This page covers the protocols OAHL uses, how the transport plugin model works, and the security considerations for each communication path.
+
+## Supported transport protocols
+
+<CardGroup cols={2}>
+  <Card title="Serial / UART / USB" icon="usb">
+    Local physical connection over `/dev/ttyUSB*` or `/dev/ttyACM*`. No network exposure. Security depends on OS-level device permissions and Docker device passthrough configuration.
+  </Card>
+  <Card title="ADB (Android Debug Bridge)" icon="mobile">
+    USB-based bootstrap for Android devices, with optional switch to ADB-over-Wi-Fi for cable-free operation. Pairing state is maintained by the adapter.
+  </Card>
+  <Card title="MQTT / MQTTS" icon="message">
+    Used for network-attached devices such as robotic arms on an industrial LAN. Use `mqtts://` with mutual TLS for production deployments.
+  </Card>
+  <Card title="BLE (Bluetooth Low Energy)" icon="bluetooth">
+    Planned support for local wireless devices. Will use the `ble` attachment profile family.
+  </Card>
+  <Card title="WebSocket relay (wss://)" icon="cloud">
+    The primary real-time transport between the OAHL node and the cloud relay. Connections use `wss://` with TLS.
+  </Card>
+  <Card title="HTTP long-poll fallback" icon="arrows-rotate">
+    Used when WebSocket is unavailable. Nodes poll `GET /v1/provider/nodes/{id}/poll` over HTTPS. Results are submitted via `POST /v1/provider/nodes/results`.
+  </Card>
+</CardGroup>
+
+## Transport plugin architecture
+
+Adapters should not reimplement connection logic for each protocol. Instead, OAHL provides a `TransportProvider` interface in `@oahl/core` that isolates connection mechanics from capability behavior.
+
+### TransportProvider interface
+
+All transport plugins implement these five methods:
+
+| Method | Description |
+|---|---|
+| `supports(profile)` | Returns whether this plugin handles the given attachment profile |
+| `connect(request)` | Establishes a connection to the device |
+| `health(connection)` | Checks the connection health |
+| `execute(connection, command)` | Sends a command and returns a result |
+| `disconnect(connection)` | Tears down the connection |
+
+### Adapter composition
+
+Adapters select a transport at runtime by matching the device's `TransportAttachmentProfile` against available plugins:
+
+```typescript
+const profile: TransportAttachmentProfile = {
+  protocol: 'usb',
+  mode: 'local',
+  metadata: { channel: 'adb' }
+};
+
+const transport = this.transports.find(t => t.supports(profile));
+if (!transport) {
+  throw new Error('No transport provider supports this attachment profile');
+}
+
+const connection = await transport.connect({ deviceId, profile, timeoutMs: 5000 });
+```
+
+### Protocol selection rules
+
+<Warning>
+Do not silently fall back to an insecure transport when a secure one fails. If `mqtts` fails and the adapter silently retries over unencrypted `mqtt`, credentials and command payloads may be exposed on the network.
+</Warning>
+
+- Prefer deterministic profile selection based on device metadata, policy, and environment.
+- Only fall back to a secondary protocol if explicitly configured.
+- Never silently switch to an insecure transport when the secure one fails.
+
+## Cloud relay security
+
+### WebSocket relay (wss://)
+
+The OAHL node connects to the cloud relay via a WebSocket at `wss://<host>/ws/provider`. The connection requires:
+
+- `Authorization: Bearer <provider_api_key>` header
+- `x-node-id: <node_id>` header
+
+All traffic between the node and the cloud relay is encrypted with TLS via the `wss://` scheme.
+
+```
+Node  ──wss://──►  Cloud relay  ──►  Agent
+      (TLS)         (broker)
+```
+
+### HTTP polling fallback
+
+When WebSocket is unavailable, nodes use HTTP long-polling over HTTPS:
+
+1. `GET /v1/provider/nodes/{id}/poll` — blocks up to 30 seconds waiting for a queued command
+2. `POST /v1/provider/nodes/results` — submits the execution result back to the cloud
+
+Both endpoints require `Authorization: Bearer <provider_api_key>` and must be called over HTTPS.
+
+### Relay mode headers
+
+Every execution response includes an `x-oahl-relay-mode` header that identifies which transport path was used:
+
+| Value | Meaning |
+|---|---|
+| `websocket` | Result returned via the WebSocket fast path |
+| `websocket-late` | WebSocket was connected but result arrived after the initial response |
+| `polling` | Result returned via HTTP long-poll |
+| `polling-timeout` | HTTP poll timed out before the node responded (HTTP 504) |
+
+<Info>
+The `x-oahl-relay-mode` header is diagnostic. Agents should not alter their behavior based on it — the execution result envelope is identical regardless of relay mode.
+</Info>
+
+### Relay timeout behavior
+
+If the hardware node does not respond within the timeout window, the cloud returns `HTTP 504` with `x-oahl-relay-mode: websocket-timeout` or `polling-timeout`. The agent can retry by re-executing the capability in the same session.
+
+The default relay timeout can be overridden per-request using the `timeout_ms` field in the execute request body.
+
+## Local network security
+
+The OAHL node's local HTTP server (default port `3000`) is designed for use within a trusted local network or Docker environment. For local transports:
+
+- **Serial / UART:** Security is enforced by Linux device permissions. Ensure the Docker container only has access to the specific `/dev/ttyUSB*` devices it needs.
+- **ADB:** ADB authorization is managed by the Android device. The first connection requires physical confirmation on the device screen.
+- **MQTT/MQTTS over LAN:** Use `mqtts://` with mutual TLS for any production robotic or industrial equipment. Plain `mqtt://` should only be used on fully isolated networks.
+
+<Note>
+Do not expose the local node server port directly to the public internet. Place it behind a VPN, SSH tunnel, or authenticated reverse proxy if remote access to the node's local API is required.
+</Note>
+
+## Docker device passthrough security
+
+When running the OAHL node in Docker, physical devices are exposed to the container via the `devices` mapping. Each entry grants the container direct access to a host device file.
+
+```yaml
+services:
+  oahl-node:
+    image: oahl/node:latest
+    devices:
+      - /dev/ttyUSB0:/dev/ttyUSB0   # RTL-SDR or serial adapter
+      - /dev/video0:/dev/video0     # USB camera
+```
+
+Security principles for device passthrough:
+
+- Mount only the specific device files required by your adapters.
+- Do not mount `/dev` as a volume — this grants the container access to all host devices.
+- Use read-only mounts where the adapter only needs to read from the device.
+- Validate device paths in `docker-compose.yml` against what your adapters actually use.
+
+## Conformance requirements for transport plugins
+
+A transport plugin is considered compliant if it:
+
+- Fully implements the `TransportProvider` interface
+- Returns structured errors in `TransportResult.error` rather than throwing unhandled exceptions
+- Supports health checks and bounded retry behavior
+- Does not leak credentials in logs or returned execution payloads
+- Validates transport readiness in `healthCheck()` and fails with structured errors when unavailable
+
+## Practical examples
+
+| Scenario | Protocol | Auth | Notes |
+|---|---|---|---|
+| USB camera on local node | `usb` | OS device permissions | Mount `/dev/video0` in Docker |
+| Android phone (wired) | `adb_usb` | ADB device authorization | Physical confirmation on first connect |
+| Android phone (wireless) | `adb_wifi` | ADB pairing token | Switch from USB bootstrap after initial pairing |
+| Industrial robotic arm | `mqtts` | Mutual TLS | `mqtts://robot-gateway.local:8883` |
+| RTL-SDR radio | `serial` | OS device permissions | Mount `/dev/ttyUSB0` in Docker |
+| Cloud relay (WebSocket) | `wss` | Bearer token | All node-to-cloud traffic |

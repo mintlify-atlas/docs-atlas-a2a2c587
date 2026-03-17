@@ -1,0 +1,103 @@
+---
+title: "CapabilityDescriptor schema"
+description: "Schema for capability objects describing what a hardware device can do."
+---
+
+A `CapabilityDescriptor` describes a single action a hardware device supports. Capabilities use dot-notation naming (`camera.capture`, `radio.scan`, `arm.move`) and carry a JSON Schema that validates execution parameters.
+
+Capability descriptors appear inside [`DeviceDescriptor.capabilities`](/api/schemas/device-descriptor) and are returned by [`GET /v1/capabilities`](/api/capabilities).
+
+## Full example
+
+```json
+{
+  "name": "camera.capture",
+  "description": "Capture a still image from the camera at the specified resolution and format.",
+  "schema": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "resolution": {
+        "type": "string",
+        "enum": ["480p", "720p", "1080p", "4k"],
+        "default": "1080p",
+        "description": "Image resolution"
+      },
+      "format": {
+        "type": "string",
+        "enum": ["jpeg", "png", "webp"],
+        "default": "jpeg",
+        "description": "Output image format"
+      }
+    },
+    "additionalProperties": false
+  },
+  "instructions": "Call this capability to take a photo. Specify resolution (default: 1080p) and format (default: jpeg). The result data will contain an image_url pointing to the captured image.",
+  "semantic_type": "ActionAffordance",
+  "helper_url": "https://docs.example.com/adapters/usb-camera/capture",
+  "template": "capture --resolution {{resolution}} --format {{format}}",
+  "metadata": {
+    "avg_duration_ms": 350,
+    "requires_focus": false
+  },
+  "pricing": {
+    "currency": "USD",
+    "rate_per_execution": 0.0005
+  }
+}
+```
+
+## Fields
+
+<ResponseField name="name" type="string" required>
+  Dot-notation capability identifier. Must be unique within a device. Examples: `"camera.capture"`, `"radio.scan"`, `"arm.move"`, `"arm.close_gripper"`.
+</ResponseField>
+
+<ResponseField name="description" type="string" required>
+  Human-readable description of what this capability does.
+</ResponseField>
+
+<ResponseField name="schema" type="object" required>
+  JSON Schema (draft-07+) that describes the `params` object accepted by this capability when calling the execute endpoints. The cloud validates params against this schema before dispatching the command.
+
+  Pass `{}` or `{"type": "object", "properties": {}}` for capabilities that take no parameters.
+</ResponseField>
+
+<ResponseField name="instructions" type="string">
+  Natural-language instructions written for LLM-native agents (MCP style). Describes when to use this capability, what params to pass, and what to expect in the result. Agents should read this field before constructing an execution request.
+</ResponseField>
+
+<ResponseField name="semantic_type" type="string">
+  W3C Web of Things (WoT) affordance type. Example: `"ActionAffordance"`. Used for semantic interoperability with WoT-compliant systems.
+</ResponseField>
+
+<ResponseField name="helper_url" type="string (uri)">
+  URL to additional documentation or tooling for this capability.
+</ResponseField>
+
+<ResponseField name="template" type="string">
+  Optional command template string. Adapter-specific; not used by the OAHL relay.
+</ResponseField>
+
+<ResponseField name="metadata" type="object">
+  Arbitrary key-value metadata. Adapter authors may include fields such as `avg_duration_ms`, hardware-specific flags, or feature tags. No fixed schema.
+</ResponseField>
+
+<ResponseField name="pricing" type="PricingDescriptor">
+  Optional per-capability pricing that overrides device-level pricing.
+
+  <Expandable title="PricingDescriptor fields">
+    <ResponseField name="currency" type="string">
+      ISO 4217 currency code. Example: `"USD"`.
+    </ResponseField>
+    <ResponseField name="rate_per_minute" type="number">
+      Cost per minute of execution time.
+    </ResponseField>
+    <ResponseField name="rate_per_execution" type="number">
+      Cost per single execution call.
+    </ResponseField>
+    <ResponseField name="payment_address" type="string">
+      Payment destination address.
+    </ResponseField>
+  </Expandable>
+</ResponseField>

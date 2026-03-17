@@ -1,0 +1,144 @@
+---
+title: "DeviceDescriptor schema"
+description: "Schema for the device objects returned by GET /v1/capabilities."
+---
+
+A `DeviceDescriptor` describes a physical hardware device registered on an OAHL node. Device descriptors are returned by [`GET /v1/capabilities`](/api/capabilities) and are also used in node registration payloads.
+
+## Full example
+
+```json
+{
+  "id": "cam-01",
+  "type": "camera",
+  "name": "USB Camera (Front)",
+  "provider": "acme-lab",
+  "node_id": "node-abc123",
+  "manufacturer": "Logitech",
+  "model": "C920",
+  "serial_number": "SN-001",
+  "status": "available",
+  "semantic_context": ["https://www.w3.org/2019/wot/td/v1"],
+  "capabilities": [
+    {
+      "name": "camera.capture",
+      "description": "Capture a still image from the camera.",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "resolution": { "type": "string", "enum": ["720p", "1080p"] },
+          "format": { "type": "string", "enum": ["jpeg", "png"] }
+        }
+      },
+      "instructions": "Call this to take a photo. Pass resolution and format as params.",
+      "semantic_type": "ActionAffordance"
+    }
+  ],
+  "access_policy": {
+    "visibility": "shared",
+    "allowed_agents": ["agent-001", "agent-002"],
+    "allowed_orgs": ["acme-corp"],
+    "denied_agents": []
+  },
+  "pricing": {
+    "currency": "USD",
+    "rate_per_execution": 0.001
+  }
+}
+```
+
+## Fields
+
+<ResponseField name="id" type="string" required>
+  Unique device identifier within the node. Example: `"cam-01"`.
+</ResponseField>
+
+<ResponseField name="type" type="string" required>
+  Device category. Examples: `"camera"`, `"sensor"`, `"radio"`, `"mobile"`, `"robot"`.
+</ResponseField>
+
+<ResponseField name="name" type="string">
+  Human-readable display name for the device.
+</ResponseField>
+
+<ResponseField name="capabilities" type="CapabilityDescriptor[]" required>
+  Array of capabilities this device supports. See [CapabilityDescriptor](/api/schemas/capability-descriptor).
+</ResponseField>
+
+<ResponseField name="provider" type="string">
+  Name of the hardware provider that owns this device.
+</ResponseField>
+
+<ResponseField name="node_id" type="string" required>
+  ID of the OAHL node this device is connected to.
+</ResponseField>
+
+<ResponseField name="manufacturer" type="string">
+  Device manufacturer name. Example: `"Logitech"`.
+</ResponseField>
+
+<ResponseField name="model" type="string">
+  Device model name. Example: `"C920"`.
+</ResponseField>
+
+<ResponseField name="serial_number" type="string">
+  Device serial number.
+</ResponseField>
+
+<ResponseField name="semantic_context" type="string[]">
+  Array of W3C WoT `@context` alignment strings. Example: `["https://www.w3.org/2019/wot/td/v1"]`.
+</ResponseField>
+
+<ResponseField name="pricing" type="PricingDescriptor">
+  Optional pricing information for using this device.
+
+  <Expandable title="PricingDescriptor fields">
+    <ResponseField name="currency" type="string">
+      ISO 4217 currency code. Example: `"USD"`.
+    </ResponseField>
+    <ResponseField name="rate_per_minute" type="number">
+      Cost per minute of session time.
+    </ResponseField>
+    <ResponseField name="rate_per_execution" type="number">
+      Cost per capability execution.
+    </ResponseField>
+    <ResponseField name="payment_address" type="string">
+      Payment destination address (format depends on payment protocol).
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="access_policy" type="DeviceAccessPolicy">
+  Controls which agents may access this device.
+
+  <Expandable title="DeviceAccessPolicy fields">
+    <ResponseField name="visibility" type="string">
+      Access visibility level:
+
+      | Value | Description |
+      |-------|-------------|
+      | `public` | Any authenticated agent may access |
+      | `shared` | Only agents/orgs in the allow-lists may access |
+      | `private` | Only the device owner may access |
+    </ResponseField>
+    <ResponseField name="allowed_agents" type="string[]">
+      List of `x-agent-id` values permitted to access this device (used when `visibility` is `shared`).
+    </ResponseField>
+    <ResponseField name="allowed_orgs" type="string[]">
+      List of `x-agent-org-id` values permitted to access this device.
+    </ResponseField>
+    <ResponseField name="denied_agents" type="string[]">
+      List of `x-agent-id` values explicitly denied access, regardless of other policy settings.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="status" type="string" required>
+  Current availability of the device:
+
+  | Value | Description |
+  |-------|-------------|
+  | `available` | Device is online and ready to accept sessions |
+  | `busy` | Device is currently held by an active session |
+  | `offline` | Device is registered but not reachable |
+</ResponseField>

@@ -1,0 +1,135 @@
+---
+title: "Agent identity headers"
+description: "Pass agent identity headers to enable per-agent and per-organization access policy enforcement."
+---
+
+OAHL supports three optional HTTP headers that agents can include on any request. These headers identify the calling agent and its organization, enabling the OAHL cloud to enforce per-agent and per-organization access policies on device visibility and session allocation.
+
+<Warning>
+  In OAHL v1, these headers are **self-asserted** and not cryptographically verified. Any agent with a valid bearer token can include any values. Only use identity headers in deployments where you control API key provisioning and trust the agents using those keys. See the security guide for details.
+</Warning>
+
+## Headers reference
+
+### x-agent-id
+
+A stable, unique identifier for the calling agent or its owner.
+
+```http
+x-agent-id: my-agent-id
+```
+
+- Used by device `access_policy.allowed_agents` and `access_policy.denied_agents` lists to grant or block access to specific agents.
+- Should remain stable across sessions — it represents the agent's identity, not a single session.
+- Recommended format: a slug or UUID that is unique within your system (`research-agent-01`, `agt-3f7a2c1d`).
+
+### x-agent-org-id
+
+The organization or tenant that the agent belongs to.
+
+```http
+x-agent-org-id: my-org-id
+```
+
+- Used by device `access_policy.allowed_orgs` to restrict device access to specific organizations.
+- Useful for multi-tenant deployments where different organizations share the same OAHL cloud but should only see their own hardware.
+
+### x-agent-roles
+
+A comma-separated list of roles assigned to the calling agent.
+
+```http
+x-agent-roles: hardware-reader,executor
+```
+
+- Used for role-based access control on device visibility and session allocation.
+- Multiple roles are separated by commas with no spaces.
+- Example roles: `hardware-reader`, `executor`, `admin`, `sensor-only`.
+
+## How access policy enforcement works
+
+Every device in OAHL has an `access_policy` object that controls visibility:
+
+```json
+{
+  "access_policy": {
+    "visibility": "shared",
+    "allowed_agents": ["research-agent-01", "monitor-agent-02"],
+    "allowed_orgs": ["acme-corp"],
+    "denied_agents": ["untrusted-agent-99"]
+  }
+}
+```
+
+When the OAHL cloud receives a request, it evaluates the bearer token and identity headers against the device's access policy:
+
+- `visibility: "public"` — any authenticated agent can access the device.
+- `visibility: "shared"` — only agents in `allowed_agents` or agents belonging to orgs in `allowed_orgs` can access.
+- `visibility: "private"` — only the device owner can access.
+- Agents in `denied_agents` are always blocked, regardless of visibility setting.
+
+Devices that an agent cannot access are filtered out of `GET /v1/capabilities` responses entirely — the agent will never see them.
+
+## Example request with identity headers
+
+<CodeGroup>
+```http HTTP
+GET /v1/capabilities?capability=camera.capture HTTP/1.1
+Host: oahl.onrender.com
+Authorization: Bearer <YOUR_AGENT_API_KEY>
+Content-Type: application/json
+x-agent-id: research-agent-01
+x-agent-org-id: acme-corp
+x-agent-roles: hardware-reader,executor
+```
+
+```typescript TypeScript
+import { CloudClient } from "@oahl/sdk";
+
+const client = new CloudClient(
+  "https://oahl.onrender.com",
+  process.env.OAHL_AGENT_API_KEY
+);
+
+// The SDK does not yet expose identity headers as first-class options;
+// pass them via a custom fetch wrapper or use the raw fetch API:
+const response = await fetch("https://oahl.onrender.com/v1/capabilities", {
+  headers: {
+    "Authorization": `Bearer ${process.env.OAHL_AGENT_API_KEY}`,
+    "Content-Type": "application/json",
+    "x-agent-id": "research-agent-01",
+    "x-agent-org-id": "acme-corp",
+    "x-agent-roles": "hardware-reader,executor"
+  }
+});
+```
+
+```python Python
+import os, requests
+
+headers = {
+    "Authorization": f"Bearer {os.environ['OAHL_AGENT_API_KEY']}",
+    "Content-Type": "application/json",
+    "x-agent-id": "research-agent-01",
+    "x-agent-org-id": "acme-corp",
+    "x-agent-roles": "hardware-reader,executor"
+}
+
+response = requests.get(
+    "https://oahl.onrender.com/v1/capabilities",
+    headers=headers,
+    params={"capability": "camera.capture"}
+)
+```
+</CodeGroup>
+
+## When to use identity headers
+
+<Info>
+  Identity headers are optional in v1. The OAHL API works without them — all authenticated agents see `public` devices regardless. You only need identity headers if:
+</Info>
+
+- You have devices with `visibility: "shared"` or `visibility: "private"` that should only be accessible to specific agents or organizations.
+- You want to enforce deny lists for specific agents.
+- You are building a multi-tenant platform where different organizations share OAHL infrastructure but need hardware isolation.
+- You want per-agent audit trails and access logs (planned for future OAHL versions).

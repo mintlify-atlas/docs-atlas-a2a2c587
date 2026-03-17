@@ -1,0 +1,214 @@
+---
+title: "Capabilities"
+description: "Capabilities are standardized named actions that hardware devices expose to AI agents."
+---
+
+A capability is a named, schema-validated action that a hardware device can perform. Instead of exposing raw hardware protocols, OAHL abstracts device functionality into capabilities that AI agents can discover and invoke without knowing anything about the underlying hardware.
+
+## Naming convention
+
+Capabilities use lowercase dot notation: `<domain>.<action>`.
+
+```
+camera.capture
+radio.scan
+radio.measure_power
+sensor.read
+system.info
+```
+
+The domain identifies the hardware class (`camera`, `radio`, `sensor`, `phone`, `robot`) and the action describes what the capability does. Compound actions can use additional segments: `robot.arm.move`.
+
+<Note>
+  Capability names are always lowercase. The node normalizes names before policy checks, so `Camera.Capture` and `camera.capture` are treated as the same capability.
+</Note>
+
+## CapabilityDescriptor schema
+
+Every capability is described by a `CapabilityDescriptor` object returned from `GET /v1/capabilities`:
+
+```typescript packages/core/src/types.ts
+export interface Capability {
+  name: string;           // dot-notation identifier, e.g. "camera.capture"
+  description: string;    // human-readable description
+  schema: any;            // JSON Schema (draft-07+) for the params argument
+  instructions?: string;  // natural-language instructions for LLM-native agents (MCP style)
+  semantic_type?: string; // W3C WoT affordance type, e.g. "ActionAffordance"
+  helper_url?: string;    // URL to capability-specific documentation
+  template?: string;      // prompt template for baseline capability fallback
+  metadata?: Record<string, any>;
+  pricing?: PricingDescriptor;
+}
+```
+
+| Field | Required | Description |
+|---|---|---|
+| `name` | Yes | Dot-notation capability identifier. |
+| `description` | Yes | Short human-readable description. |
+| `schema` | Yes | JSON Schema defining the accepted `params` object. |
+| `instructions` | No | Natural-language instructions for LLM agents (MCP-style tool description). |
+| `semantic_type` | No | W3C WoT affordance type (e.g. `ActionAffordance`). |
+
+## Discovering capabilities
+
+Agents call `GET /v1/capabilities` to get the full list of devices and capabilities visible to them:
+
+```bash
+curl -H "Authorization: Bearer <agent_api_key>" \
+     https://oahl.onrender.com/v1/capabilities
+```
+
+The response includes paginated device records, each with an embedded `capabilities` array:
+
+```json Example response (abridged)
+{
+  "timestamp": 1710000000000,
+  "devices": [
+    {
+      "id": "usb-cam-1",
+      "type": "camera",
+      "node_id": "my-laptop-01",
+      "status": "available",
+      "capabilities": [
+        {
+          "name": "camera.capture",
+          "description": "Capture a still image from the attached USB camera.",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "format": { "type": "string", "enum": ["jpeg", "png"] }
+            }
+          },
+          "instructions": "Call this capability to take a photo. Returns base64-encoded image data.",
+          "semantic_type": "ActionAffordance"
+        }
+      ]
+    }
+  ],
+  "pagination": { "page": 1, "page_size": 25, "total": 1, "total_pages": 1 }
+}
+```
+
+## Filtering capabilities
+
+The `GET /v1/capabilities` endpoint supports several query parameters to narrow results:
+
+| Parameter | Description | Example |
+|---|---|---|
+| `type` | Filter by device type. | `type=camera` |
+| `provider` | Filter by provider name. | `provider=My+Lab` |
+| `node_id` | Restrict to a specific node. | `node_id=my-laptop-01` |
+| `capability` | Filter to devices exposing a specific capability (partial match). | `capability=radio` |
+| `q` | Free-text search across device ID, type, provider, and capability names. | `q=sdr` |
+
+```bash Filter to radio devices
+curl -H "Authorization: Bearer <agent_api_key>" \
+     "https://oahl.onrender.com/v1/capabilities?type=radio"
+```
+
+## Built-in capability examples
+
+<AccordionGroup>
+  <Accordion title="camera.capture">
+    Capture a still image from the attached camera.
+
+    ```json
+    {
+      "name": "camera.capture",
+      "description": "Capture a still image from the attached USB camera.",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "format": { "type": "string", "enum": ["jpeg", "png"] }
+        }
+      }
+    }
+    ```
+  </Accordion>
+  <Accordion title="radio.scan">
+    Scan a frequency range and return detected signals.
+
+    ```json
+    {
+      "name": "radio.scan",
+      "description": "Scan a frequency range for active signals using an RTL-SDR dongle.",
+      "schema": {
+        "type": "object",
+        "required": ["start_freq_mhz", "end_freq_mhz"],
+        "properties": {
+          "start_freq_mhz": { "type": "number" },
+          "end_freq_mhz":   { "type": "number" },
+          "step_khz":       { "type": "number", "default": 100 }
+        }
+      }
+    }
+    ```
+  </Accordion>
+  <Accordion title="radio.measure_power">
+    Measure signal power at a specific frequency.
+
+    ```json
+    {
+      "name": "radio.measure_power",
+      "description": "Measure signal power (dBm) at the specified frequency.",
+      "schema": {
+        "type": "object",
+        "required": ["freq_mhz"],
+        "properties": {
+          "freq_mhz": { "type": "number" }
+        }
+      }
+    }
+    ```
+  </Accordion>
+  <Accordion title="sensor.read">
+    Read the current value from a generic sensor.
+
+    ```json
+    {
+      "name": "sensor.read",
+      "description": "Read the current measurement from the sensor.",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "unit": { "type": "string", "description": "Preferred unit, e.g. celsius or fahrenheit." }
+        }
+      }
+    }
+    ```
+  </Accordion>
+  <Accordion title="system.info">
+    Return metadata about the node or device.
+
+    ```json
+    {
+      "name": "system.info",
+      "description": "Return hardware and firmware metadata for this device.",
+      "schema": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## How capabilities are declared on a node
+
+Capabilities come from two sources:
+
+1. **Adapter-defined**: The adapter's `getCapabilities(deviceId)` method returns the full `Capability` array. This is the primary source for first-party and community adapters.
+2. **Config-declared**: The `devices[].capabilities` array in `oahl-config.json` lists capability names as a hint, but the authoritative descriptor always comes from the adapter.
+
+```json oahl-config.json — declaring capabilities per device
+{
+  "devices": [
+    {
+      "id": "usb-cam-1",
+      "type": "camera",
+      "adapter": "usb-camera",
+      "capabilities": ["camera.capture"]
+    }
+  ]
+}
+```

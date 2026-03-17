@@ -1,0 +1,155 @@
+---
+title: "Nodes"
+description: "A node is an OAHL service installed on a machine connected to physical hardware."
+---
+
+A node is the bridge between your physical hardware and the OAHL API. It runs as a local service on any machine with hardware attached—a laptop with a webcam, a Raspberry Pi with sensors, or a workstation with SDR dongles—and makes those devices discoverable and executable by AI agents.
+
+## What a node does
+
+When a node starts, it:
+
+1. Loads your `oahl-config.json` and instantiates the configured adapters.
+2. Calls each adapter's `getDevices()` and `getCapabilities()` methods to build a live inventory.
+3. Registers that inventory with the Cloud Registry so remote agents can discover it.
+4. Begins polling or maintaining a WebSocket connection to receive incoming commands.
+5. Executes commands by delegating to the appropriate adapter and returns structured results.
+
+<Info>
+  A node never exposes raw hardware protocols to agents. All interaction goes through the standardized capability interface.
+</Info>
+
+## Node configuration
+
+Every node is configured with `oahl-config.json`. The key top-level fields are:
+
+| Field | Type | Description |
+|---|---|---|
+| `node_id` | string | Unique identifier for this node. Used in API calls and Cloud Registry records. |
+| `cloud_url` | string | URL of the Cloud Registry. Leave empty for local-only mode. |
+| `provider_api_key` | string | Bearer token used to authenticate the node with the cloud. |
+| `plugins` | string[] | npm package names of adapter plugins to load. |
+| `devices` | array | Per-device configuration including ID, type, and assigned adapter. |
+
+```json oahl-config.json
+{
+  "node_id": "my-laptop-01",
+  "cloud_url": "https://oahl.onrender.com",
+  "provider_api_key": "123456",
+  "plugins": [
+    "@oahl/adapter-mock",
+    "@oahl/adapter-usb-camera"
+  ],
+  "provider": {
+    "name": "My Personal Test Node"
+  },
+  "devices": [
+    {
+      "id": "usb-cam-1",
+      "type": "camera",
+      "adapter": "usb-camera",
+      "capabilities": [
+        "camera.capture"
+      ]
+    }
+  ]
+}
+```
+
+## How nodes register with the Cloud Registry
+
+On startup, the node calls `POST /v1/provider/nodes/register` with its full device inventory. This creates or updates the node's record in the Cloud Registry, making its hardware discoverable to agents through `GET /v1/capabilities`.
+
+```json Registration payload example
+{
+  "node_id": "my-laptop-01",
+  "provider": { "name": "My Personal Test Node" },
+  "devices": [
+    {
+      "id": "usb-cam-1",
+      "type": "camera",
+      "node_id": "my-laptop-01",
+      "status": "available",
+      "capabilities": [
+        {
+          "name": "camera.capture",
+          "description": "Capture a still image from the camera.",
+          "schema": { "type": "object", "properties": {} }
+        }
+      ]
+    }
+  ]
+}
+```
+
+## Heartbeat and expiry
+
+After the initial registration, the node re-sends the same `POST /v1/provider/nodes/register` request every **15 seconds** to keep its record alive. If the cloud does not receive a heartbeat within **300 seconds**, the node record expires and its devices are no longer visible to agents.
+
+<Tip>
+  If a node goes offline unexpectedly, agents requesting one of its devices will receive a 404. Design your agent workflows to handle this gracefully by retrying or falling back to another node.
+</Tip>
+
+## Local-only mode
+
+The Cloud Registry is strictly optional. To run a fully private, air-gapped node, set `cloud_url` to an empty string:
+
+```json oahl-config.json (local-only)
+{
+  "node_id": "my-local-lab",
+  "cloud_url": "",
+  "devices": [ ... ]
+}
+```
+
+In this mode the node skips all cloud registration and heartbeat logic. AI agents on the same network can reach the node's local Express server directly (default: `http://localhost:3000`).
+
+<Note>
+  Local-only nodes are not discoverable through the Cloud Registry. Agents must know the node's LAN address to connect.
+</Note>
+
+## Node lifecycle
+
+<Steps>
+  <Step title="Startup">
+    The node process reads `oahl-config.json`, validates it, and loads all listed plugins.
+  </Step>
+  <Step title="Register">
+    Each adapter runs `initialize()` and `getDevices()`. The node calls `POST /v1/provider/nodes/register` to publish the device inventory to the Cloud Registry.
+  </Step>
+  <Step title="Poll / WebSocket">
+    The node either opens a persistent WebSocket connection to `wss://<cloud>/ws/provider` (preferred) or falls back to long-polling `GET /v1/provider/nodes/{id}/poll` every 30 seconds.
+  </Step>
+  <Step title="Execute">
+    When a command arrives, the node looks up the target adapter and calls `execute(deviceId, capabilityName, args)`. The structured result is returned to the cloud via the WebSocket or `POST /v1/provider/nodes/results`.
+  </Step>
+  <Step title="Heartbeat">
+    Every 15 seconds the node re-registers with the cloud to refresh its TTL and update device status.
+  </Step>
+</Steps>
+
+## Starting a node
+
+<Tabs>
+  <Tab title="npm">
+    ```bash
+    npm install -g @fredabila/oahl
+    oahl init     # generates oahl-config.json interactively
+    oahl start    # starts the node daemon
+    ```
+  </Tab>
+  <Tab title="Docker">
+    ```bash
+    docker run -d \\
+      --name oahl-node \\
+      -p 8080:8080 \\
+      -v $(pwd)/oahl-config.json:/app/oahl-config.json \\
+      --device=/dev/video0 \\
+      oahl/node:latest
+    ```
+  </Tab>
+</Tabs>
+
+<Tip>
+  Docker is recommended for adapters that rely on native bindings (such as `serialport`). The container ships with all required build tools pre-installed.
+</Tip>

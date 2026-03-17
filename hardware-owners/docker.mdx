@@ -1,0 +1,275 @@
+---
+title: "Running with Docker"
+description: "Deploy your OAHL node in a Docker container for clean, reproducible hardware access."
+---
+
+Running your OAHL node inside Docker is the recommended approach for most hardware owners. It keeps native dependencies isolated from your host OS and provides a consistent, reproducible environment across machines.
+
+## Why Docker is recommended
+
+Many hardware adapters (especially those using serial, USB, or BLE) require native C++ bindings compiled during `npm install` — for example, `serialport` requires `node-gyp`, which in turn needs Python, `make`, and a C++ compiler.
+
+The official OAHL Docker image (`fredabila/oahl-node:latest`) is built on `node:20-bullseye-slim` with all system dependencies pre-installed:
+
+- `build-essential` and `python3` for native Node.js bindings
+- `libusb-1.0-0` for USB device access
+- `rtl-sdr` for RTL-SDR radio adapters
+- `ffmpeg` and `v4l-utils` for cameras and video streaming
+- `udev` for Linux device mapping
+
+The adapter accesses hardware via the `--device` flag, without touching your host OS.
+
+## Quick start with `docker run`
+
+The minimal command to start an OAHL node with a USB webcam passed through:
+
+```bash
+docker run -d \
+  --name oahl-node \
+  -p 3000:3000 \
+  -v $(pwd)/oahl-config.json:/app/packages/server/oahl-config.json \
+  --device=/dev/video0 \
+  fredabila/oahl-node:latest
+```
+
+For a USB SDR dongle or any USB device:
+
+```bash
+docker run -d \
+  --name oahl-node \
+  -p 3000:3000 \
+  -v $(pwd)/oahl-config.json:/app/packages/server/oahl-config.json \
+  --device=/dev/bus/usb \
+  fredabila/oahl-node:latest
+```
+
+For a serial device (e.g. Arduino on `/dev/ttyACM0`):
+
+```bash
+docker run -d \
+  --name oahl-node \
+  -p 3000:3000 \
+  -v $(pwd)/oahl-config.json:/app/packages/server/oahl-config.json \
+  --device=/dev/ttyACM0 \
+  fredabila/oahl-node:latest
+```
+
+<Note>
+  The `--device` flag maps a single host device into the container. Pass multiple `--device` flags to expose more than one piece of hardware at the same time.
+</Note>
+
+## Using docker-compose
+
+For repeatable, version-controlled deployments, use the provided `docker-compose.yml`:
+
+```yaml docker-compose.yml
+version: '3.8'
+
+services:
+  oahl-node:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: fredabila/oahl-node:latest
+    container_name: oahl-node
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - PORT=3000
+    volumes:
+      # Mount the local config file into the container
+      - ./oahl-config.json:/app/packages/server/oahl-config.json
+    privileged: true
+    devices:
+      # Uncomment and map hardware directly to the container
+      - /dev/bus/usb:/dev/bus/usb
+      # - /dev/ttyACM0:/dev/ttyACM0  # For Arduino
+      # - /dev/video0:/dev/video0    # For Webcams
+```
+
+Start the node:
+
+```bash
+docker compose up -d
+```
+
+Stop the node:
+
+```bash
+docker compose down
+```
+
+<Tip>
+  Set `restart: unless-stopped` to have the node automatically recover after a machine reboot or container crash.
+</Tip>
+
+## Volume mounting `oahl-config.json`
+
+Your `oahl-config.json` must be mounted into the container at the path the server expects:
+
+```
+./oahl-config.json  →  /app/packages/server/oahl-config.json
+```
+
+With `docker run`:
+
+```bash
+-v $(pwd)/oahl-config.json:/app/packages/server/oahl-config.json
+```
+
+With `docker-compose.yml`:
+
+```yaml
+volumes:
+  - ./oahl-config.json:/app/packages/server/oahl-config.json
+```
+
+<Warning>
+  Changes to `oahl-config.json` on the host are reflected immediately on the next node restart. The running container must be restarted after editing the config.
+</Warning>
+
+## Environment variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `PORT` | `3000` | Port the HTTP server binds to inside the container |
+| `OAHL_OWNER_EMAIL` | — | Provider email, injected automatically by `oahl start` |
+| `OAHL_OWNER_PIN` | — | Provider PIN, injected automatically by `oahl start` |
+
+Pass environment variables with `docker run -e`:
+
+```bash
+docker run -d \
+  --name oahl-node \
+  -p 8080:8080 \
+  -e PORT=8080 \
+  -e OAHL_OWNER_EMAIL=you@example.com \
+  -e OAHL_OWNER_PIN=123456 \
+  -v $(pwd)/oahl-config.json:/app/packages/server/oahl-config.json \
+  --device=/dev/video0 \
+  fredabila/oahl-node:latest
+```
+
+## Hardware device passthrough
+
+The `--device` flag grants the container direct access to a host device without running the container in fully privileged mode.
+
+<CodeGroup>
+
+```bash USB webcam
+docker run -d \
+  --name oahl-node \
+  -p 3000:3000 \
+  -v $(pwd)/oahl-config.json:/app/packages/server/oahl-config.json \
+  --device=/dev/video0:/dev/video0 \
+  fredabila/oahl-node:latest
+```
+
+```bash All USB devices
+docker run -d \
+  --name oahl-node \
+  -p 3000:3000 \
+  -v $(pwd)/oahl-config.json:/app/packages/server/oahl-config.json \
+  --device=/dev/bus/usb:/dev/bus/usb \
+  fredabila/oahl-node:latest
+```
+
+```bash Serial device (Arduino)
+docker run -d \
+  --name oahl-node \
+  -p 3000:3000 \
+  -v $(pwd)/oahl-config.json:/app/packages/server/oahl-config.json \
+  --device=/dev/ttyACM0:/dev/ttyACM0 \
+  fredabila/oahl-node:latest
+```
+
+```bash Multiple devices
+docker run -d \
+  --name oahl-node \
+  -p 3000:3000 \
+  -v $(pwd)/oahl-config.json:/app/packages/server/oahl-config.json \
+  --device=/dev/video0:/dev/video0 \
+  --device=/dev/ttyACM0:/dev/ttyACM0 \
+  fredabila/oahl-node:latest
+```
+
+</CodeGroup>
+
+<Info>
+  On Linux, you may need to add your user to the `dialout` group (`sudo usermod -aG dialout $USER`) before serial devices are accessible to the Docker daemon.
+</Info>
+
+## Starting, stopping, and restarting
+
+```bash
+# Start (docker-compose)
+docker compose up -d
+
+# Stop
+docker compose down
+
+# Restart after config changes
+docker compose restart oahl-node
+
+# Start (docker run)
+docker start oahl-node
+
+# Stop (docker run)
+docker stop oahl-node
+```
+
+## Viewing logs
+
+```bash
+# Follow live logs
+docker logs -f oahl-node
+
+# Last 100 lines
+docker logs --tail 100 oahl-node
+
+# With docker-compose
+docker compose logs -f oahl-node
+```
+
+## Building the image locally
+
+If you want to build the image from source (for example, to include custom adapters):
+
+```bash
+docker build -t my-oahl-node:latest .
+```
+
+The `Dockerfile` installs all system dependencies, copies the monorepo packages and adapters, runs `npm install`, builds all TypeScript packages, and starts the server from `packages/server`:
+
+```dockerfile Dockerfile
+FROM node:20-bullseye-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    python3 \
+    libusb-1.0-0 \
+    libusb-1.0-0-dev \
+    rtl-sdr \
+    ffmpeg \
+    v4l-utils \
+    udev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY package.json package-lock.json tsconfig.base.json ./
+COPY packages/core ./packages/core
+COPY packages/server ./packages/server
+COPY adapters/adapter-mock ./adapters/adapter-mock
+COPY adapters/adapter-usb-camera ./adapters/adapter-usb-camera
+COPY adapters/adapter-rtl-sdr ./adapters/adapter-rtl-sdr
+
+RUN npm install
+RUN npm run build --workspaces --if-present
+
+WORKDIR /app/packages/server
+
+EXPOSE 3000
+CMD ["npm", "start"]
+```

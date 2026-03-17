@@ -1,0 +1,209 @@
+---
+title: "Connecting to the Cloud Registry"
+description: "Register your node with the OAHL Cloud Registry so AI agents worldwide can discover your hardware."
+---
+
+The OAHL Cloud Registry is the global discovery hub that connects AI agents to hardware nodes. When your node registers, agents can find your devices, request sessions, and execute capabilities through the cloud relay — without you having to expose your node directly to the public internet.
+
+## How the Cloud Registry works
+
+<Columns cols={3}>
+  <Card title="Node registration" icon="plug">
+    On startup, your node sends its `node_id`, device list, and capabilities to the registry using your `provider_api_key`.
+  </Card>
+  <Card title="Heartbeat" icon="heart-pulse">
+    Every 15 seconds, the node sends a heartbeat to signal it is still online. Nodes that miss heartbeats for 300 seconds (5 minutes) are marked as expired.
+  </Card>
+  <Card title="Agent discovery" icon="magnifying-glass">
+    AI agents query the registry to find nodes with matching capabilities. The cloud relay forwards requests to the correct node without the agent needing its IP address.
+  </Card>
+</Columns>
+
+## Setting `cloud_url` and `provider_api_key`
+
+Add both fields to your `oahl-config.json`:
+
+```json oahl-config.json
+{
+  "node_id": "my-laptop-01",
+  "cloud_url": "https://oahl.onrender.com",
+  "provider_api_key": "your-api-key-here",
+  "provider": {
+    "name": "My Lab"
+  },
+  "plugins": ["@oahl/adapter-usb-camera"],
+  "devices": [
+    {
+      "id": "cam-01",
+      "type": "camera",
+      "adapter": "usb-camera",
+      "capabilities": ["camera.capture"],
+      "access_policy": {
+        "visibility": "public"
+      },
+      "policy": {
+        "public": true,
+        "max_session_minutes": 30
+      }
+    }
+  ]
+}
+```
+
+Obtain your `provider_api_key` from the [OAHL Developer Portal](https://oahl.onrender.com). Each key is tied to your account and used to authenticate registration and heartbeat requests.
+
+<Warning>
+  Keep your `provider_api_key` secret. Do not commit it to version control. Use environment variables or a secrets manager in production deployments.
+</Warning>
+
+## Node registration and heartbeat lifecycle
+
+When `oahl start` runs:
+
+1. The node reads `cloud_url` and `provider_api_key` from the config.
+2. It sends a registration request containing `node_id`, provider details, and the full device/capability list.
+3. The registry records the node as active.
+4. Every **15 seconds**, the node sends a heartbeat `POST` to keep the registration alive.
+5. If no heartbeat is received for **300 seconds**, the registry marks the node as expired and agents can no longer discover it.
+
+<Info>
+  The node automatically re-registers if the connection is interrupted and restored. You do not need to restart the node after a brief network outage.
+</Info>
+
+## Device visibility settings
+
+Each device has an `access_policy.visibility` field that controls how it appears to agents in the registry:
+
+| Visibility | Who can discover and use the device |
+|---|---|
+| `public` | Any authenticated agent |
+| `shared` | Agents and organisations on your allow-list only |
+| `private` | Only you (the owner) and explicitly allowed agents |
+
+### Public device
+
+Any agent can discover and request a session:
+
+```json
+{
+  "id": "cam-01",
+  "type": "camera",
+  "access_policy": {
+    "visibility": "public"
+  },
+  "policy": {
+    "public": true,
+    "max_session_minutes": 30
+  }
+}
+```
+
+### Shared device (allow-list)
+
+Only specific agents or organisations can access the device:
+
+```json
+{
+  "id": "sdr-01",
+  "type": "radio",
+  "access_policy": {
+    "visibility": "shared",
+    "allowed_agents": ["agent_xyz", "agent_abc"],
+    "allowed_orgs": ["org_research"]
+  },
+  "policy": {
+    "public": false,
+    "max_session_minutes": 15
+  }
+}
+```
+
+### Private device
+
+Not discoverable by agents in the registry. Useful for devices you only use locally or want to control exclusively:
+
+```json
+{
+  "id": "sensor-01",
+  "type": "sensor",
+  "access_policy": {
+    "visibility": "private"
+  },
+  "policy": {
+    "public": false,
+    "max_session_minutes": 60
+  }
+}
+```
+
+## Provider API key authentication
+
+The `provider_api_key` is sent with every registration and heartbeat request. The Cloud Registry uses it to:
+
+- Verify that the registering node belongs to your account
+- Associate devices with your provider profile
+- Enforce per-account rate limits and quotas
+
+If the key is invalid or missing, the node logs an authentication error and continues running locally, but it will not appear in the global registry.
+
+To rotate your key:
+
+1. Generate a new key in the Developer Portal.
+2. Update `provider_api_key` in `oahl-config.json`.
+3. Restart the node with `oahl start` (or `docker compose restart oahl-node`).
+
+## Verifying your node is registered
+
+After starting the node, check the startup logs for a successful registration message:
+
+```
+🚀 Starting OAHL Node...
+✅ Registered with Cloud Registry: https://oahl.onrender.com
+📡 Heartbeat active (15s interval)
+```
+
+You can also query the local capabilities endpoint to confirm the node is running:
+
+```bash
+curl http://localhost:3000/capabilities
+```
+
+To verify the node appears in the registry, use the Developer Portal dashboard or the cloud health endpoint:
+
+```bash
+curl https://oahl.onrender.com/nodes
+```
+
+<Tip>
+  If your node is not appearing in the registry, check that `cloud_url` is reachable from your machine and that your `provider_api_key` is correct. Firewall rules blocking outbound HTTPS are the most common cause.
+</Tip>
+
+## Running in offline / local-only mode
+
+To disable cloud registration entirely, set `cloud_url` to an empty string or remove the field:
+
+```json oahl-config.json (offline mode)
+{
+  "node_id": "my-local-lab",
+  "cloud_url": "",
+  "devices": [
+    {
+      "id": "cam-01",
+      "type": "camera",
+      "adapter": "usb-camera",
+      "capabilities": ["camera.capture"]
+    }
+  ]
+}
+```
+
+In offline mode:
+
+- The node skips registration and the heartbeat loop entirely.
+- The local HTTP server still starts on `http://localhost:3000`.
+- Agents on the same LAN can interact directly with the node using the local URL.
+- No device information is sent to the internet.
+
+<Note>
+  The Cloud Registry is entirely optional. OAHL is designed to work fully air-gapped. Use offline mode for private labs, edge deployments, or any situation where internet access is restricted.
+</Note>

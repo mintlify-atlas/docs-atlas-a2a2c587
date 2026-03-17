@@ -1,0 +1,144 @@
+---
+title: "WebSocket relay"
+description: "The WebSocket relay provides real-time bidirectional command dispatch between the cloud and hardware nodes."
+---
+
+The OAHL cloud exposes a WebSocket endpoint that hardware nodes connect to for real-time command delivery and result submission. This is the preferred transport — nodes should always attempt WebSocket first and fall back to HTTP long-polling only when a persistent connection is not possible.
+
+## Connection
+
+**URL:**
+
+```
+wss://<host>/ws/provider?node_id=<node_id>
+```
+
+**Required headers:**
+
+| Header | Value |
+|--------|-------|
+| `Authorization` | `Bearer <provider_api_key>` |
+| `x-node-id` | The `node_id` registered by this node |
+
+**Example (JavaScript):**
+
+```js
+const ws = new WebSocket(
+  `wss://oahl.onrender.com/ws/provider?node_id=node-abc123`,
+  {
+    headers: {
+      Authorization: `Bearer ${providerApiKey}`,
+      'x-node-id': 'node-abc123',
+    },
+  }
+);
+```
+
+## Message protocol
+
+All messages are JSON-encoded text frames.
+
+### Cloud → Node: `command`
+
+Dispatches a single capability execution request to the node.
+
+```json
+{
+  "type": "command",
+  "payload": {
+    "requestId": "cmd-3a7f92bc-1234",
+    "deviceId": "cam-01",
+    "capability": "camera.capture",
+    "params": { "resolution": "1080p", "format": "jpeg" },
+    "dispatchedAt": "2026-03-17T12:00:00.000Z"
+  }
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `type` | `string` | Always `"command"` |
+| `payload.requestId` | `string` | Opaque request identifier — include in the result message |
+| `payload.deviceId` | `string` | Target device ID on this node |
+| `payload.capability` | `string` | Capability name to invoke |
+| `payload.params` | `object` | Parameters for the capability |
+| `payload.dispatchedAt` | `string` | ISO 8601 timestamp when the cloud dispatched the command |
+
+### Cloud → Node: `command-batch`
+
+Dispatches a batch of capability execution requests.
+
+```json
+{
+  "type": "command-batch",
+  "payload": {
+    "requestId": "cmd-batch-9f1c3d",
+    "deviceId": "arm-01",
+    "commands": [
+      { "capability": "arm.move", "params": { "x": 10, "y": 5, "z": 0 } },
+      { "capability": "arm.close_gripper", "params": {} }
+    ],
+    "dispatchedAt": "2026-03-17T12:01:00.000Z"
+  }
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `type` | `string` | Always `"command-batch"` |
+| `payload.requestId` | `string` | Opaque request identifier |
+| `payload.deviceId` | `string` | Target device ID |
+| `payload.commands` | `array` | Ordered list of `{capability, params}` objects |
+| `payload.dispatchedAt` | `string` | ISO 8601 timestamp |
+
+### Node → Cloud: `result`
+
+Sent by the node after executing a command (single or batch) to return the result to the cloud.
+
+```json
+{
+  "type": "result",
+  "requestId": "cmd-3a7f92bc-1234",
+  "result": {
+    "schema_version": "1.0",
+    "operation_id": "cmd-3a7f92bc-1234",
+    "status": "success",
+    "completion": { "done": true, "state": "completed" },
+    "capability": "camera.capture",
+    "device_id": "cam-01",
+    "timestamp": "2026-03-17T12:00:01.000Z",
+    "data": { "image_url": "https://storage.example.com/img-001.jpeg" }
+  }
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `type` | `string` | Always `"result"` |
+| `requestId` | `string` | Must match the `requestId` from the received command |
+| `result` | `ExecutionResult` | The full [ExecutionResult](/api/schemas/execution-result) envelope |
+
+## Relay modes
+
+The `x-oahl-relay-mode` response header on execution endpoints reflects how the result was delivered:
+
+| Mode | Description |
+|------|-------------|
+| `websocket` | Result arrived via WebSocket within the timeout window |
+| `websocket-late` | WebSocket result arrived after the initial response was sent (rare) |
+| `polling` | Result arrived via HTTP long-poll (`POST /v1/provider/nodes/results`) |
+| `websocket-timeout` | WebSocket was used but the node did not respond before timeout (504) |
+| `polling-timeout` | Long-poll was used but the node did not respond before timeout (504) |
+
+## WebSocket vs polling tradeoffs
+
+| | WebSocket | HTTP long-poll |
+|-|-----------|----------------|
+| **Latency** | Low (sub-100 ms typical) | Higher (extra HTTP round-trip) |
+| **Connection overhead** | Persistent TCP connection | Reconnect on each poll cycle |
+| **Firewall compatibility** | May be blocked in some networks | Always works |
+| **Recommended** | Yes — use by default | Fallback only |
+
+<Tip>
+  The OAHL node process manages the WebSocket connection automatically, including reconnection with exponential back-off. Only use the HTTP fallback endpoints when building a custom node implementation in an environment where WebSocket is unavailable.
+</Tip>

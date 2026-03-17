@@ -1,0 +1,219 @@
+---
+title: "Architecture"
+description: "Understand how OAHL nodes, adapters, the cloud relay, and agents fit together."
+---
+
+OAHL is an open framework that exposes real-world hardware to AI agents through standardized APIs and pluggable adapters. This page describes how the system's components connect and how a request travels from an agent to a physical device.
+
+## System overview
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                      AI Agents                          │
+│         (using @oahl/sdk-js or sdk-python)              │
+└────────────────────────┬────────────────────────────────┘
+                         │  REST / WebSocket
+                         ▼
+┌─────────────────────────────────────────────────────────┐
+│                  @oahl/cloud                            │
+│          Cloud Registry & Relay                         │
+│  • capability discovery across all registered nodes     │
+│  • bearer token auth, policy enforcement                │
+│  • WebSocket fast-path / HTTP polling fallback          │
+└──────────────┬──────────────────────────────────────────┘
+               │  heartbeat + relay
+               ▼
+┌─────────────────────────────────────────────────────────┐
+│              Local Node (hardware owner's machine)      │
+│  ┌─────────────┐   ┌──────────────┐   ┌─────────────┐  │
+│  │ @oahl/server│──▶│  @oahl/core  │──▶│  Adapters   │  │
+│  │  REST API   │   │ PolicyEngine │   │  (plugins)  │  │
+│  │             │   │ SessionMgr   │   │             │  │
+│  └─────────────┘   └──────────────┘   └──────┬──────┘  │
+└──────────────────────────────────────────────┼─────────┘
+                                               │
+                                               ▼
+                                   ┌─────────────────────┐
+                                   │   Physical Hardware  │
+                                   │  cameras, SDRs,      │
+                                   │  sensors, phones,    │
+                                   │  serial devices …    │
+                                   └─────────────────────┘
+```
+
+## Components
+
+<CardGroup cols={2}>
+  <Card title="@oahl/server" icon="server">
+    The HTTP REST API entry point. Exposes endpoints for capability discovery (`GET /v1/capabilities`), session allocation (`POST /v1/requests`), capability execution (`POST /v1/sessions/{id}/execute`), and session teardown (`POST /v1/sessions/{id}/stop`). Started via `oahl start`.
+  </Card>
+  <Card title="@oahl/core" icon="circle-nodes">
+    Contains all domain interfaces and runtime logic: the `PolicyEngine` that validates requests against device rules, the `SessionManager` that prevents conflicting concurrent access, and the `Adapter` interface contract that every hardware plugin must implement.
+  </Card>
+  <Card title="@oahl/cloud" icon="cloud">
+    The hosted Cloud Registry and relay service. Nodes register on startup via a secure heartbeat. Agents connect here — not directly to nodes — to discover and request hardware globally. Enforces bearer token authentication and org/agent-level access policies.
+  </Card>
+  <Card title="Adapters (@oahl/adapter-*)" icon="plug">
+    Hardware-specific plugins that implement the standard `Adapter` interface. Each adapter translates OAHL capability calls (e.g. `camera.capture`) into the physical protocol needed by the device (USB, serial, ADB, etc.). First-party adapters: `adapter-usb-camera`, `adapter-rtl-sdr`, `adapter-mock`.
+  </Card>
+  <Card title="@oahl/cli" icon="terminal">
+    The `oahl` command. Handles `login`, `init`, `start`, `install`, `remove`, `scan-ports`, `create-adapter`, `tui`, and `conformance` workflows. Manages `oahl-config.json` and the local `.oahl-session.json` credential store.
+  </Card>
+  <Card title="SDKs" icon="code">
+    **`@oahl/sdk-js`** — full-featured TypeScript/JavaScript SDK for Node.js and browser. **`sdk-python`** — lightweight Python client. Both provide `OahlClient` for direct local node access and `CloudClient` for cloud-relay access.
+  </Card>
+</CardGroup>
+
+## Execution flow
+
+Every hardware operation follows the same five-step lifecycle:
+
+<Steps>
+  <Step title="Discover capabilities">
+    The agent calls `GET /v1/capabilities` on the Cloud Registry (or directly on a local node). The response lists available devices with their `id`, `type`, `provider`, `node_id`, `status`, and supported capability names.
+
+    Capability names use lowercase dot notation: `camera.capture`, `radio.scan`, `phone.vibrate`, `robot.arm.move`.
+  </Step>
+
+  <Step title="Request a session">
+    The agent sends `POST /v1/requests` with the target `deviceId` and desired capability. The Cloud Registry forwards this to the correct node.
+
+    ```json
+    POST /v1/requests
+    {
+      "deviceId": "usb-cam-1",
+      "capability": "camera.capture"
+    }
+    ```
+
+    The `SessionManager` in `@oahl/core` checks device availability. If the device is already allocated to another agent, the request is rejected — sessions are exclusive.
+  </Step>
+
+  <Step title="Policy check">
+    Before the session is granted, the `PolicyEngine` evaluates the request against the device's configured rules:
+
+    - `visibility` — `public`, `shared`, or `private`
+    - `allowed_agents` / `allowed_orgs` — allow-list controls
+    - `denied_agents` — explicit block list
+    - `max_session_minutes` — time-bounded access
+
+    Agent identity is passed via `x-agent-id` and `x-agent-org-id` headers. A denied request returns an explicit error — there is no silent failure.
+  </Step>
+
+  <Step title="Execute the capability">
+    Once a session is active, the agent calls:
+
+    ```json
+    POST /v1/sessions/{session_id}/execute
+    {
+      "capability": "camera.capture",
+      "args": {}
+    }
+    ```
+
+    `@oahl/server` routes the command to the correct adapter. The adapter translates the OAHL capability call into the hardware-specific protocol and returns the result.
+
+    Every response follows the OAHL execution envelope:
+
+    ```json
+    {
+      "schema_version": "1",
+      "operation_id": "op-abc123",
+      "status": "success",
+      "completion": "full",
+      "capability": "camera.capture",
+      "device_id": "usb-cam-1",
+      "timestamp": "2026-03-17T10:00:00.000Z",
+      "data": { ... },
+      "error": null
+    }
+    ```
+
+    | Field | Values | Description |
+    |-------|--------|-------------|
+    | `schema_version` | `"1"` | Envelope format version |
+    | `status` | `accepted` \| `in_progress` \| `success` \| `error` | Execution outcome |
+    | `completion` | `full` \| `partial` | Whether the operation ran to completion |
+    | `data` | any | Hardware response payload |
+    | `error` | string \| null | Error message if `status` is `error` |
+  </Step>
+
+  <Step title="Stop the session">
+    When the agent is done, it releases the device:
+
+    ```json
+    POST /v1/sessions/{session_id}/stop
+    ```
+
+    The `SessionManager` frees the allocation. Cleanup is always callable — including in error paths — to prevent devices from remaining locked after a failed execution.
+  </Step>
+</Steps>
+
+## Local mode vs cloud relay mode
+
+<Tabs>
+  <Tab title="Cloud relay mode (default)">
+    When `cloud_url` is set in `oahl-config.json`, the node registers itself with the Cloud Registry on startup and sends periodic heartbeats. Remote agents discover and request hardware through the registry without needing a direct network route to the hardware owner's machine.
+
+    ```json
+    {
+      "node_id": "my-laptop-01",
+      "cloud_url": "https://oahl.onrender.com",
+      "provider_api_key": "your-api-key"
+    }
+    ```
+
+    The cloud relay supports a **WebSocket fast-path** for low-latency command forwarding. If WebSocket connectivity degrades, the relay falls back to **HTTP polling** automatically.
+  </Tab>
+  <Tab title="Local mode">
+    Set `cloud_url` to an empty string to run a fully private, offline node. The node skips cloud registration entirely. Local agents on the same LAN interact with hardware directly via `http://localhost:3000`.
+
+    ```json
+    {
+      "node_id": "my-local-lab",
+      "cloud_url": "",
+      "devices": []
+    }
+    ```
+
+    No device information is broadcast to the internet. This is appropriate for private lab environments, air-gapped networks, or development setups.
+  </Tab>
+</Tabs>
+
+## Adapter contract
+
+Every adapter — whether first-party or community-built — must implement the following interface from `@oahl/core`:
+
+```typescript
+export default class MyAdapter implements Adapter {
+  id = 'adapter-my-device';
+
+  async initialize(): Promise<void> { ... }
+
+  async healthCheck(): Promise<{ status: 'ok' | 'error'; message?: string }> { ... }
+
+  async getDevices(): Promise<Device[]> { ... }
+
+  async getCapabilities(deviceId: string): Promise<Capability[]> { ... }
+
+  async execute(deviceId: string, capabilityName: string, args: any): Promise<any> { ... }
+}
+```
+
+| Method | Description |
+|--------|-------------|
+| `initialize()` | Called once at node startup. Set up connections, allocate resources. |
+| `healthCheck()` | Called periodically. Returns `ok` or `error` with an optional message. |
+| `getDevices()` | Returns the list of physical devices this adapter manages. |
+| `getCapabilities(deviceId)` | Returns the capabilities available for a specific device. |
+| `execute(deviceId, capability, args)` | Performs the capability and returns the hardware response. |
+
+Scaffold a new adapter from the CLI with:
+
+```bash
+oahl create-adapter my-sensor
+```
+
+<Note>
+  Adapters are independently packageable npm packages. Publish to npm with an `oahl-manifest.json` to be listed in the [Adapter Marketplace](https://oahl.org/marketplace).
+</Note>

@@ -1,0 +1,230 @@
+---
+title: "Access policies"
+description: "Define per-device access policies to control exactly which AI agents can use your hardware."
+---
+
+Every device registered with OAHL carries a `DeviceAccessPolicy`. The cloud enforces this policy on every discovery request (`GET /v1/capabilities`) and every session allocation (`POST /v1/requests`). Agents that do not satisfy the policy receive `HTTP 403`.
+
+## Policy structure
+
+The `DeviceAccessPolicy` object has four fields:
+
+<ParamField body="visibility" type="string" required>
+  Controls the baseline access level for the device.
+
+  - `public` — any authenticated agent may discover and use the device.
+  - `shared` — only agents and organisations in the allow-lists may access.
+  - `private` — only the device owner may access.
+</ParamField>
+
+<ParamField body="allowed_agents" type="string[]">
+  List of agent identifiers (matching `x-agent-id` header values) that are allowed to access the device when `visibility` is `shared`.
+</ParamField>
+
+<ParamField body="allowed_orgs" type="string[]">
+  List of organisation identifiers (matching `x-agent-org-id` header values) that are allowed to access the device when `visibility` is `shared`.
+</ParamField>
+
+<ParamField body="denied_agents" type="string[]">
+  List of agent identifiers that are explicitly denied access regardless of visibility level or allow-list membership. Deny always takes priority.
+</ParamField>
+
+## Visibility levels
+
+### public
+
+Any agent with a valid API key can discover and use the device. Use this for devices you want to expose openly — for example, a demo camera or a public sensor feed.
+
+```json
+{
+  "visibility": "public"
+}
+```
+
+### shared
+
+Only agents and organisations you explicitly list can access the device. This is the recommended setting for devices you want to share with specific partners or teams.
+
+```json
+{
+  "visibility": "shared",
+  "allowed_agents": ["agent-abc123", "agent-def456"],
+  "allowed_orgs": ["acme-robotics"]
+}
+```
+
+### private
+
+Only the device owner can access the device. No other agent — even if listed in `allowed_agents` — will be granted access.
+
+```json
+{
+  "visibility": "private"
+}
+```
+
+## Policy evaluation order
+
+The cloud evaluates policies in this order:
+
+<Steps>
+  <Step title="Check denied_agents">
+    If the calling agent's `x-agent-id` appears in `denied_agents`, access is **immediately denied** regardless of any other policy field. Returns `HTTP 403`.
+  </Step>
+  <Step title="Check visibility">
+    If `visibility` is `private`, only the device owner is allowed. All other agents are denied.
+
+    If `visibility` is `public`, any authenticated agent is allowed (unless already denied above).
+  </Step>
+  <Step title="Check allow-lists (shared only)">
+    If `visibility` is `shared`, the agent must match at least one entry in `allowed_agents` (by `x-agent-id`) or `allowed_orgs` (by `x-agent-org-id`). If neither matches, access is denied.
+  </Step>
+</Steps>
+
+<Note>
+Deny always takes priority. An agent listed in both `allowed_agents` and `denied_agents` will be denied.
+</Note>
+
+## Setting policies in oahl-config.json
+
+You set the `access_policy` on each device in your `oahl-config.json` file.
+
+```json
+{
+  "node_id": "my-node",
+  "provider_api_key": "...",
+  "devices": [
+    {
+      "id": "usb-cam-01",
+      "type": "camera",
+      "adapter": "usb-camera",
+      "access_policy": {
+        "visibility": "shared",
+        "allowed_agents": ["agent-abc123"],
+        "allowed_orgs": ["my-org"],
+        "denied_agents": []
+      }
+    },
+    {
+      "id": "rtl-sdr-01",
+      "type": "radio",
+      "adapter": "rtl-sdr",
+      "access_policy": {
+        "visibility": "private"
+      }
+    }
+  ]
+}
+```
+
+## Session duration limits
+
+You can limit how long an agent can hold a session on a device using `maxDurationMs` in the `policies` array. This is set at the node level in `oahl-config.json`.
+
+```json
+{
+  "policies": [
+    {
+      "deviceId": "usb-cam-01",
+      "maxDurationMs": 300000
+    }
+  ]
+}
+```
+
+<Tip>
+Setting a short session duration limit is an effective compensating control for replay attacks while OAHL v1 lacks nonce-based replay protection.
+</Tip>
+
+## Capability-level controls
+
+Beyond device-level access policies, the local node's `PolicyEngine` enforces per-device capability lists:
+
+```json
+{
+  "policies": [
+    {
+      "deviceId": "rtl-sdr-01",
+      "allowedCapabilities": ["radio.scan"],
+      "disabledCapabilities": ["radio.transmit"]
+    }
+  ]
+}
+```
+
+<ParamField body="allowedCapabilities" type="string[]">
+  If set, only the listed capabilities may be executed on this device. All others are blocked.
+</ParamField>
+
+<ParamField body="disabledCapabilities" type="string[]">
+  Capabilities in this list are unconditionally blocked, regardless of allow-list status.
+</ParamField>
+
+<ParamField body="maxDurationMs" type="number">
+  Maximum session duration in milliseconds. Sessions that exceed this limit are forcibly stopped.
+</ParamField>
+
+Policy checks happen **before** any adapter execution. The agent receives a structured error if a capability is blocked.
+
+## Policy enforcement timing
+
+OAHL enforces policies at two points:
+
+| Enforcement point | What is checked |
+|---|---|
+| `GET /v1/capabilities` | Device visibility — agents only see devices their policy allows |
+| `POST /v1/requests` | Full policy check before allocating a session |
+| `POST /v1/sessions/{id}/execute` | Capability allow/deny check (local node `PolicyEngine`) |
+
+## Agent identity caveat
+
+<Warning>
+Agent identity headers (`x-agent-id`, `x-agent-org-id`) are **self-asserted in OAHL v1**. There is no cryptographic proof that a header value corresponds to the bearer token being used. A malicious client could supply any agent ID.
+
+Only use `allowed_agents` and `allowed_orgs` with agents whose API keys are provisioned through a controlled process where the provisioning system also distributes and records the agreed identity values.
+</Warning>
+
+Signed JWT identity binding is planned for Phase 4. Until then, treat these headers as advisory trust signals rather than cryptographically verified identities.
+
+## Example configurations
+
+### Public demo device
+
+```json
+{
+  "id": "demo-sensor-01",
+  "type": "sensor",
+  "adapter": "mock",
+  "access_policy": {
+    "visibility": "public"
+  }
+}
+```
+
+### Team-shared device with one blocked agent
+
+```json
+{
+  "id": "camera-lab-01",
+  "type": "camera",
+  "adapter": "usb-camera",
+  "access_policy": {
+    "visibility": "shared",
+    "allowed_orgs": ["research-team"],
+    "denied_agents": ["agent-banned-99"]
+  }
+}
+```
+
+### Locked-down production device
+
+```json
+{
+  "id": "robot-arm-prod",
+  "type": "robot",
+  "adapter": "robot-arm",
+  "access_policy": {
+    "visibility": "private"
+  }
+}
+```

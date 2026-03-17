@@ -1,0 +1,487 @@
+---
+title: 'Python SDK'
+description: 'The official oahl Python package — a lightweight client for AI agents using OAHL via local node or cloud relay.'
+---
+
+The `oahl` package mirrors the JavaScript SDK and exposes two clients:
+
+- **`OahlClient`** — connects to a local OAHL hardware node
+- **`CloudClient`** — connects to the OAHL cloud relay
+
+Both clients use `requests` under the hood and raise standard Python exceptions on HTTP errors.
+
+## Installation
+
+```bash
+pip install oahl
+```
+
+<Note>
+  Requires Python 3.8 or later and `requests >= 2.25.1`.
+</Note>
+
+---
+
+## OahlClient (local node)
+
+`OahlClient` communicates directly with a running OAHL node. Use it when your agent has direct network access to a hardware node.
+
+### Constructor
+
+```python
+OahlClient(base_url: str = 'http://localhost:3000')
+```
+
+<ParamField path="base_url" type="str" default="http://localhost:3000">
+  Base URL of the local OAHL node. Trailing slashes are stripped.
+</ParamField>
+
+### Methods
+
+#### `health()`
+
+```python
+health() -> dict
+```
+
+Checks whether the OAHL node is reachable and healthy.
+
+<ResponseField name="result" type="dict">
+  Health status response from the node.
+</ResponseField>
+
+---
+
+#### `get_devices()`
+
+```python
+get_devices() -> list[dict]
+```
+
+Returns all devices registered with the node.
+
+<ResponseField name="result" type="list[dict]">
+  A list of device objects. Each dict includes at minimum `id`, `type`, and `name`.
+</ResponseField>
+
+---
+
+#### `get_capabilities(device_id)`
+
+```python
+get_capabilities(device_id: str) -> list[dict]
+```
+
+Returns all capabilities exposed by a specific device.
+
+<ParamField path="device_id" type="str" required>
+  The ID of the device to query.
+</ParamField>
+
+<ResponseField name="result" type="list[dict]">
+  A list of capability definitions for the device.
+</ResponseField>
+
+---
+
+#### `start_session(device_id)`
+
+```python
+start_session(device_id: str) -> dict
+```
+
+Opens a new session with a device. You must hold an active session to call `execute`.
+
+<ParamField path="device_id" type="str" required>
+  The ID of the device to start a session with.
+</ParamField>
+
+<ResponseField name="result" type="dict">
+  <Expandable title="Session fields">
+    <ResponseField name="id" type="str" required>
+      Unique session identifier.
+    </ResponseField>
+    <ResponseField name="deviceId" type="str" required>
+      ID of the device this session belongs to.
+    </ResponseField>
+    <ResponseField name="startTime" type="int" required>
+      Unix timestamp (ms) when the session started.
+    </ResponseField>
+    <ResponseField name="status" type="str" required>
+      Current session status, e.g. `active`.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+---
+
+#### `execute(session_id, capability_name, args?)`
+
+```python
+execute(
+    session_id: str,
+    capability_name: str,
+    args: dict | None = None
+) -> dict
+```
+
+Executes a named capability within an active session.
+
+<ParamField path="session_id" type="str" required>
+  The active session ID returned by `start_session`.
+</ParamField>
+
+<ParamField path="capability_name" type="str" required>
+  The capability to invoke, e.g. `camera.capture`.
+</ParamField>
+
+<ParamField path="args" type="dict">
+  Optional arguments forwarded to the capability handler. Defaults to `{}`.
+</ParamField>
+
+<ResponseField name="result" type="dict">
+  The return value from the capability handler.
+</ResponseField>
+
+---
+
+#### `stop_session(session_id)`
+
+```python
+stop_session(session_id: str) -> dict
+```
+
+Terminates an active session and releases the device.
+
+<ParamField path="session_id" type="str" required>
+  The ID of the session to stop.
+</ParamField>
+
+---
+
+#### `get_session(session_id)`
+
+```python
+get_session(session_id: str) -> dict
+```
+
+Fetches the current state of a session.
+
+<ParamField path="session_id" type="str" required>
+  The session ID to look up.
+</ParamField>
+
+<ResponseField name="result" type="dict">
+  The current session object. Same shape as the return value of `start_session`.
+</ResponseField>
+
+---
+
+## CloudClient (cloud relay)
+
+`CloudClient` connects to the OAHL cloud relay for capability discovery and brokered sessions.
+
+### Constructor
+
+```python
+CloudClient(
+    base_url: str = 'https://oahl.onrender.com',
+    agent_api_key: str | None = None
+)
+```
+
+<ParamField path="base_url" type="str" default="https://oahl.onrender.com">
+  Base URL of the OAHL cloud relay. Trailing slashes are stripped.
+</ParamField>
+
+<ParamField path="agent_api_key" type="str">
+  Agent API key for authenticated requests. Can also be set later with
+  `set_agent_api_key`.
+</ParamField>
+
+### Methods
+
+#### `set_agent_api_key(agent_api_key)`
+
+```python
+set_agent_api_key(agent_api_key: str) -> None
+```
+
+Sets or replaces the API key used for `Authorization: Bearer` headers on all subsequent requests.
+
+<ParamField path="agent_api_key" type="str" required>
+  The agent API key to use.
+</ParamField>
+
+---
+
+#### `get_capabilities(query?)`
+
+```python
+get_capabilities(query: dict | None = None) -> dict
+```
+
+Searches and filters capabilities registered across the OAHL cloud network. All query fields are optional — pass `None` or omit to list everything.
+
+<ParamField path="query" type="dict">
+  <Expandable title="Supported query keys">
+    <ParamField path="q" type="str">
+      Free-text search term matched against device and capability metadata.
+    </ParamField>
+    <ParamField path="type" type="str">
+      Filter by device type.
+    </ParamField>
+    <ParamField path="provider" type="str">
+      Filter by provider name.
+    </ParamField>
+    <ParamField path="node_id" type="str">
+      Filter by specific node ID.
+    </ParamField>
+    <ParamField path="capability" type="str">
+      Filter by capability name.
+    </ParamField>
+    <ParamField path="page" type="int">
+      Page number for paginated results (1-indexed).
+    </ParamField>
+    <ParamField path="page_size" type="int">
+      Number of results per page.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ResponseField name="result" type="dict">
+  <Expandable title="Response fields">
+    <ResponseField name="timestamp" type="int" required>
+      Unix timestamp (ms) when the response was generated.
+    </ResponseField>
+    <ResponseField name="devices" type="list" required>
+      Matched devices and their capabilities.
+    </ResponseField>
+    <ResponseField name="pagination" type="dict">
+      Pagination metadata: `page`, `page_size`, `total`, `total_pages`,
+      `has_next`, `has_prev`.
+    </ResponseField>
+    <ResponseField name="filters" type="dict">
+      Echo of the filters applied to the query.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+---
+
+#### `request_session(input_data)`
+
+```python
+request_session(input_data: dict) -> dict
+```
+
+Requests a brokered session via the cloud relay.
+
+<ParamField path="input_data" type="dict">
+  <Expandable title="Supported keys">
+    <ParamField path="capability" type="str">
+      Capability name to match, e.g. `camera.capture`.
+    </ParamField>
+    <ParamField path="device_id" type="str">
+      Request a session with a specific device by ID.
+    </ParamField>
+    <ParamField path="node_id" type="str">
+      Constrain the session to a specific node by ID.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ResponseField name="result" type="dict">
+  <Expandable title="Response fields">
+    <ResponseField name="session_id" type="str" required>
+      The cloud session ID to use in subsequent `execute` and `stop_session` calls.
+    </ResponseField>
+    <ResponseField name="status" type="str" required>
+      Initial session status.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+---
+
+#### `execute(session_id, input_data)`
+
+```python
+execute(session_id: str, input_data: dict) -> any
+```
+
+Executes a capability through a cloud-brokered session.
+
+<ParamField path="session_id" type="str" required>
+  The session ID returned by `request_session`.
+</ParamField>
+
+<ParamField path="input_data" type="dict">
+  <Expandable title="Supported keys">
+    <ParamField path="capability" type="str" required>
+      The capability to invoke, e.g. `camera.capture`.
+    </ParamField>
+    <ParamField path="params" type="dict">
+      Key-value arguments forwarded to the capability handler.
+    </ParamField>
+    <ParamField path="timeout_ms" type="int">
+      Execution timeout in milliseconds.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ResponseField name="result" type="any">
+  The return value from the capability handler on the remote node.
+</ResponseField>
+
+---
+
+#### `stop_session(session_id)`
+
+```python
+stop_session(session_id: str) -> dict
+```
+
+Terminates a cloud session and releases the underlying device reservation.
+
+<ParamField path="session_id" type="str" required>
+  The cloud session ID to stop.
+</ParamField>
+
+<ResponseField name="result" type="dict">
+  <Expandable title="Response fields">
+    <ResponseField name="status" type="str" required>
+      Final session status after stopping.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+---
+
+## Dataclasses
+
+The package also exports typed dataclasses. These are used internally but can be useful for type hints or IDE support.
+
+```python
+from oahl import Device, Capability, Session
+```
+
+<AccordionGroup>
+  <Accordion title="Device">
+    ```python
+    @dataclass
+    class Device:
+        id: str
+        type: str
+        name: str
+        isPublic: bool
+        manufacturer: str | None = None
+        model: str | None = None
+        serial_number: str | None = None
+        semantic_context: list[str] | None = None
+        metadata: dict | None = None
+        pricing: dict | None = None
+    ```
+  </Accordion>
+  <Accordion title="Capability">
+    ```python
+    @dataclass
+    class Capability:
+        name: str
+        description: str
+        schema: dict
+        instructions: str | None = None
+        semantic_type: str | None = None
+        helper_url: str | None = None
+        template: str | None = None
+        context: str | None = None
+        metadata: dict | None = None
+        pricing: dict | None = None
+    ```
+  </Accordion>
+  <Accordion title="Session">
+    ```python
+    @dataclass
+    class Session:
+        id: str
+        deviceId: str
+        startTime: int
+        status: str
+    ```
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Full examples
+
+<CodeGroup>
+
+```python OahlClient — local node
+import os
+from oahl import OahlClient
+
+client = OahlClient("http://localhost:3000")
+
+# Confirm the node is reachable
+client.health()
+
+# Discover devices
+devices = client.get_devices()
+device = devices[0]
+
+# Inspect capabilities
+capabilities = client.get_capabilities(device["id"])
+print([c["name"] for c in capabilities])
+
+# Open a session
+session = client.start_session(device["id"])
+
+# Execute a capability
+result = client.execute(
+    session["id"],
+    "camera.capture",
+    {"resolution": "1080p"}
+)
+print(result)
+
+# Check session state
+state = client.get_session(session["id"])
+print(state["status"])
+
+# Release the device
+client.stop_session(session["id"])
+```
+
+```python CloudClient — cloud relay
+import os
+from oahl import CloudClient
+
+client = CloudClient(agent_api_key=os.environ["AGENT_API_KEY"])
+
+# Search for devices with a camera capability
+capabilities = client.get_capabilities({"q": "camera", "page": 1, "page_size": 25})
+device = capabilities["devices"][0]
+print(f"Found {device['id']} on node {device['node_id']}")
+
+# Request a brokered session
+session_req = client.request_session({
+    "device_id": device["id"],
+    "capability": "camera.capture",
+})
+session_id = session_req["session_id"]
+
+# Execute the capability through the relay
+result = client.execute(session_id, {
+    "capability": "camera.capture",
+    "params": {"resolution": "720p"},
+    "timeout_ms": 10000,
+})
+print(result)
+
+# Stop the cloud session
+stopped = client.stop_session(session_id)
+print(stopped["status"])
+```
+
+</CodeGroup>

@@ -1,0 +1,97 @@
+---
+title: "Agent integration overview"
+description: "Three ways to give your AI agents access to physical hardware through OAHL."
+---
+
+OAHL (Open Agent Hardware Layer) is a standard REST API and relay layer that lets AI agents discover, reserve, and execute real hardware capabilities without writing any device-specific integration code. Your agents talk to the OAHL cloud; the cloud handles routing to hardware nodes behind the scenes.
+
+<Note>
+  Your agents should never connect directly to hardware nodes. Always go through the OAHL cloud API or the MCP server — both enforce access policy, session management, and relay transport automatically.
+</Note>
+
+## Why agents need OAHL
+
+Hardware is heterogeneous — cameras, radios, robotic arms, sensors, and phones all expose different protocols. Without an abstraction layer, every agent needs custom integration per device. OAHL solves this with three things:
+
+- **Capability-based discovery** — agents ask for what they need (e.g., `camera.capture`) and OAHL finds a compatible device.
+- **Session isolation** — OAHL allocates exclusive sessions so agents don't conflict.
+- **Relay transport** — the cloud relay handles WebSocket fast-path and HTTP long-poll fallback transparently.
+
+## Three integration patterns
+
+<CardGroup cols={3}>
+  <Card title="Direct API" icon="code" href="/agents/direct-api">
+    Make HTTP calls directly to the OAHL REST API. Full control over the session lifecycle, request parameters, and response parsing. Best when you need precise control or are building your own abstraction layer.
+  </Card>
+  <Card title="Tool wrappers" icon="wrench" href="/agents/tool-wrappers">
+    Wrap OAHL capabilities as callable Python or TypeScript functions. Hides session management from the LLM. Best for LLM function-calling integrations (OpenAI, Anthropic tools API).
+  </Card>
+  <Card title="MCP server" icon="server" href="/agents/mcp-server">
+    Launch the built-in OAHL MCP server with one CLI command. Capabilities become native MCP Tools — no code required. Best for Claude Desktop, LangChain, Cursor, and any MCP-compatible agent.
+  </Card>
+</CardGroup>
+
+## Comparing the approaches
+
+<Tabs>
+  <Tab title="Direct API">
+    **Use when:** You need full control, custom retry logic, or are integrating OAHL into an existing HTTP client pipeline.
+
+    **You manage:** Authentication headers, session request, execute call, error handling, and session stop.
+
+    **Effort:** Medium — roughly 20–40 lines of boilerplate per capability.
+
+    ```typescript
+    const client = new CloudClient("https://oahl.onrender.com", apiKey);
+    const { session_id } = await client.requestSession({ capability: "camera.capture" });
+    const result = await client.execute(session_id, { capability: "camera.capture", params: { resolution: "1080p" } });
+    await client.stopSession(session_id);
+    ```
+  </Tab>
+  <Tab title="Tool wrappers">
+    **Use when:** You're providing tools to an LLM and want hardware access to feel like a regular function call.
+
+    **You manage:** The wrapper function and its public parameter surface. The wrapper internalises the session lifecycle.
+
+    **Effort:** Low — write once per capability, reuse everywhere.
+
+    ```python
+    result = capture_remote_image(country="US", resolution="1080p")
+    ```
+  </Tab>
+  <Tab title="MCP server">
+    **Use when:** Your agent framework natively supports MCP (Claude Desktop, LangChain, Cursor, etc.).
+
+    **You manage:** Nothing beyond starting the server. Capability discovery, tool registration, and session lifecycle are all automatic.
+
+    **Effort:** Zero code — one CLI command.
+
+    ```bash
+    oahl mcp --url https://oahl.onrender.com --key <YOUR_AGENT_API_KEY>
+    ```
+  </Tab>
+</Tabs>
+
+## Which pattern should you choose?
+
+| Scenario | Recommended pattern |
+|---|---|
+| Claude Desktop, Cursor, or LangChain agent | MCP server |
+| OpenAI function calling / Anthropic tools API | Tool wrappers |
+| Custom agent pipeline or SDK integration | Direct API |
+| Building a new agent framework | Direct API |
+| Rapid prototyping | MCP server |
+
+## Agent identity and access control
+
+OAHL supports optional identity headers on every request. These enable per-agent and per-organization access policy enforcement — controlling which agents can see and use which devices.
+
+```http
+x-agent-id: my-agent-id
+x-agent-org-id: my-org-id
+x-agent-roles: hardware-reader,executor
+```
+
+Device visibility is controlled by an access policy on each device: `public`, `shared`, or `private`. The cloud enforces this server-side based on the bearer token and the identity headers you supply.
+
+See [Agent identity headers](/agents/identity-headers) for the full reference.

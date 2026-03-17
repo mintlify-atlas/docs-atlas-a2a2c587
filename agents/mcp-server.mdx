@@ -1,0 +1,132 @@
+---
+title: "MCP server"
+description: "Expose all OAHL hardware capabilities as native MCP Tools for Claude, LangChain, Cursor, and any MCP-compatible agent."
+---
+
+The OAHL MCP server wraps the entire OAHL cloud API as a native [Model Context Protocol](https://modelcontextprotocol.io) server. Once running, every hardware capability registered in your OAHL cloud becomes a callable MCP Tool — with no code required on your part.
+
+## What the MCP server does
+
+When an MCP-compatible agent connects to the OAHL MCP server:
+
+1. The server calls `GET /v1/capabilities` and auto-discovers every device and capability visible to your API key.
+2. Each capability is registered as an MCP Tool. Tool names follow the pattern `<capability_name>_<device_id>` (dots replaced with underscores, special characters sanitized).
+3. When the agent calls a tool, the server automatically creates a session (`POST /v1/requests`), executes the capability (`POST /v1/sessions/{id}/execute`), and stops the session (`POST /v1/sessions/{id}/stop`). The agent never sees a `session_id`.
+4. The execution result is returned to the agent as a JSON text block.
+
+## Starting the MCP server
+
+```bash
+oahl mcp --url https://oahl.onrender.com --key <YOUR_AGENT_API_KEY>
+```
+
+The server runs over **stdio** (standard MCP transport). It prints `OAHL MCP Server running on stdio` to stderr when ready.
+
+You can also set the API key as an environment variable:
+
+```bash
+export OAHL_AGENT_API_KEY=<YOUR_AGENT_API_KEY>
+oahl mcp --url https://oahl.onrender.com --key $OAHL_AGENT_API_KEY
+```
+
+## How tools are registered
+
+The server fetches all devices from `GET /v1/capabilities` and maps each device capability to an MCP Tool:
+
+- **Tool name:** `<capability>_<device_id>` with dots replaced by underscores and non-alphanumeric characters sanitized. For example, `camera.capture` on device `cam-gh-01` becomes `camera_capture_cam_gh_01`.
+- **Tool description:** `[Device: <device_id>] <capability description>`. If the capability has an `instructions` field, it is appended: `Instructions: <...>`.
+- **Input schema:** The capability's JSON Schema is passed directly as the MCP Tool `inputSchema`. If the capability has no schema, a generic `params` object is used.
+
+```typescript
+// Simplified from packages/cli/src/mcp.ts
+const tools = response.devices.flatMap(device =>
+  device.capabilities.map((cap) => ({
+    name: `${cap.name.replace(/\./g, '_')}_${device.id.replace(/[^a-zA-Z0-9_-]/g, '_')}`,
+    description: `[Device: ${device.id}] ${cap.description}`,
+    inputSchema: cap.schema ?? { type: "object", properties: { params: { type: "object" } } }
+  }))
+);
+```
+
+## Automatic session management
+
+The MCP server fully manages the session lifecycle on behalf of the agent:
+
+<Steps>
+  <Step title="Tool called">
+    The agent calls an MCP Tool with its input arguments.
+  </Step>
+  <Step title="Session reserved">
+    The server extracts the `capability` and `device_id` from the tool name and calls `POST /v1/requests` to reserve a session.
+  </Step>
+  <Step title="Capability executed">
+    The server calls `POST /v1/sessions/{id}/execute` with a 60-second timeout, passing through the agent's input as `params`.
+  </Step>
+  <Step title="Session stopped">
+    The server calls `POST /v1/sessions/{id}/stop` to release the device, whether the execution succeeded or failed.
+  </Step>
+  <Step title="Result returned">
+    The full execution result is returned to the agent as a JSON text block.
+  </Step>
+</Steps>
+
+## Configuring Claude Desktop
+
+Add the OAHL MCP server to your `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "oahl": {
+      "command": "oahl",
+      "args": [
+        "mcp",
+        "--url", "https://oahl.onrender.com",
+        "--key", "<YOUR_AGENT_API_KEY>"
+      ]
+    }
+  }
+}
+```
+
+The config file is located at:
+- **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
+- **Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
+
+After saving the config, restart Claude Desktop. The OAHL hardware tools will appear in the tool selector.
+
+<Tip>
+  Use an environment variable for the API key rather than hardcoding it in the config file. Claude Desktop passes the environment of the shell it was launched from, so `export OAHL_AGENT_API_KEY=...` in your shell profile is sufficient.
+</Tip>
+
+## Compatible agent frameworks
+
+Any framework that supports the MCP stdio transport works with the OAHL MCP server:
+
+| Framework | Integration |
+|---|---|
+| Claude Desktop | `claude_desktop_config.json` — see above |
+| Cursor | MCP server config in Cursor settings |
+| LangChain | `langchain-mcp-adapters` package |
+| LangGraph | Via LangChain MCP adapters |
+| Any MCP client | `StdioClientTransport` with the `oahl mcp` command |
+
+## Error handling
+
+If a tool call fails, the MCP server returns an MCP response with `isError: true` and a text description of the error:
+
+```json
+{
+  "content": [{
+    "type": "text",
+    "text": "Error executing capability: HTTP error 404: No matching available hardware found."
+  }],
+  "isError": true
+}
+```
+
+The agent receives this as a tool error and can decide to retry with different parameters or surface the failure to the user.
+
+<Note>
+  The MCP server re-discovers capabilities on every `ListTools` request. If you add new hardware to your OAHL fleet, it will appear as a new tool automatically on the next request — no server restart needed.
+</Note>

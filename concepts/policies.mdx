@@ -1,0 +1,195 @@
+---
+title: "Policies"
+description: "Policies let hardware owners define exactly what AI agents can and cannot do with their devices."
+---
+
+Policies give hardware owners fine-grained control over who can access their devices and what they can do. They are evaluated before any capability execution is attempted, so an unauthorized request never reaches the hardware.
+
+## Device access policy
+
+The `DeviceAccessPolicy` schema controls which agents and organizations can interact with a device:
+
+```typescript openapi.yaml — DeviceAccessPolicy schema
+{
+  visibility: 'public' | 'shared' | 'private';
+  allowed_agents?: string[];   // agent IDs explicitly permitted
+  allowed_orgs?: string[];     // organization IDs explicitly permitted
+  denied_agents?: string[];    // agent IDs explicitly blocked
+}
+```
+
+### Visibility levels
+
+| Level | Who can access |
+|---|---|
+| `public` | Any authenticated agent with a valid bearer token. |
+| `shared` | Only agents or organizations listed in `allowed_agents` or `allowed_orgs`. |
+| `private` | Only the device owner. |
+
+<Note>
+  `visibility` defaults to `public` if not specified. If you are exposing sensitive hardware, always set an explicit policy.
+</Note>
+
+## Capability-level controls
+
+Beyond access control, the `Policy` interface in `@oahl/core` lets you restrict which capabilities an agent may invoke on a given device:
+
+```typescript packages/core/src/types.ts
+export interface Policy {
+  deviceId: string;
+  maxDurationMs: number;           // maximum session duration in milliseconds
+  allowedCapabilities: string[];   // if non-empty, only these capabilities are permitted
+  disabledCapabilities: string[];  // these capabilities are always blocked
+}
+```
+
+The `PolicyEngine` evaluates these rules before forwarding any execution request:
+
+```typescript packages/core/src/PolicyEngine.ts
+isCapabilityAllowed(deviceId: string, capabilityName: string): boolean {
+  const policy = this.getPolicy(deviceId);
+  if (!policy) return true;   // no policy = allow all
+
+  // deny-list checked first
+  if (disabledCapabilities.includes(requestedCapability)) return false;
+
+  // allow-list checked second (if populated)
+  if (allowedCapabilities.length > 0 &&
+      !allowedCapabilities.includes(requestedCapability)) return false;
+
+  return true;
+}
+```
+
+## Configuring policies in oahl-config.json
+
+Policies are declared per device in the `policies` array of `oahl-config.json`:
+
+```json oahl-config.json — policy configuration
+{
+  "node_id": "my-laptop-01",
+  "devices": [
+    {
+      "id": "usb-cam-1",
+      "type": "camera",
+      "adapter": "usb-camera"
+    },
+    {
+      "id": "rtl-sdr-1",
+      "type": "radio",
+      "adapter": "rtl-sdr"
+    }
+  ],
+  "policies": [
+    {
+      "deviceId": "usb-cam-1",
+      "maxDurationMs": 30000,
+      "allowedCapabilities": ["camera.capture"],
+      "disabledCapabilities": []
+    },
+    {
+      "deviceId": "rtl-sdr-1",
+      "maxDurationMs": 300000,
+      "allowedCapabilities": [],
+      "disabledCapabilities": ["radio.transmit"]
+    }
+  ]
+}
+```
+
+In this example:
+- `usb-cam-1` may only run `camera.capture` and sessions are capped at 30 seconds.
+- `rtl-sdr-1` can run any capability except `radio.transmit`, with sessions up to 5 minutes.
+
+## Agent identity headers
+
+Policies reference agents by ID. Agents send their identity in request headers:
+
+| Header | Description |
+|---|---|
+| `x-agent-id` | Stable identifier for the calling agent or owner. |
+| `x-agent-org-id` | Organization the agent belongs to. |
+| `x-agent-roles` | Comma-separated list of agent roles. |
+
+All three headers are optional and self-asserted in OAHL v1—they are not cryptographically bound to the bearer token.
+
+<Warning>
+  In OAHL v1, agent identity headers are self-asserted. A malicious agent could supply a false `x-agent-id`. Do not rely on these headers as a hard security boundary in high-trust environments. Signed JWT / mTLS binding is planned for a future release.
+</Warning>
+
+```bash Example: sending agent identity headers
+curl -X POST https://oahl.onrender.com/v1/requests \\
+  -H "Authorization: Bearer <agent_api_key>" \\
+  -H "x-agent-id: agent-abc-123" \\
+  -H "x-agent-org-id: my-org" \\
+  -H "x-agent-roles: researcher,read-only" \\
+  -H "Content-Type: application/json" \\
+  -d '{ "capability": "camera.capture" }'
+```
+
+## How policies are enforced
+
+<Steps>
+  <Step title="Agent sends request">
+    The agent calls `POST /v1/requests` or `POST /v1/sessions/{id}/execute`, optionally including identity headers.
+  </Step>
+  <Step title="Access policy check">
+    The cloud checks the device's `DeviceAccessPolicy`. If visibility is `private` or `shared`, the agent's `x-agent-id` and `x-agent-org-id` are matched against `allowed_agents`, `allowed_orgs`, and `denied_agents`. Agents in `denied_agents` are always blocked.
+  </Step>
+  <Step title="Capability policy check">
+    The `PolicyEngine` checks `disabledCapabilities` first, then `allowedCapabilities`. If the requested capability fails either check, the request is rejected with a `403` response before the command reaches the hardware node.
+  </Step>
+  <Step title="Session duration check">
+    `maxDurationMs` sets the maximum permitted session length. Sessions that exceed this limit are terminated by the node.
+  </Step>
+  <Step title="Execution">
+    Only requests that pass all policy checks are forwarded to the hardware adapter for execution.
+  </Step>
+</Steps>
+
+## Policy reference
+
+<AccordionGroup>
+  <Accordion title="Allow all agents (public device)">
+    ```json
+    {
+      "deviceId": "usb-cam-1",
+      "maxDurationMs": 60000,
+      "allowedCapabilities": [],
+      "disabledCapabilities": []
+    }
+    ```
+    No `visibility` restriction + empty `allowedCapabilities` = any authenticated agent can run any capability.
+  </Accordion>
+  <Accordion title="Restrict to specific agents">
+    Set `visibility` to `shared` on the device descriptor and list permitted agent IDs:
+
+    ```json DeviceAccessPolicy
+    {
+      "visibility": "shared",
+      "allowed_agents": ["agent-abc-123", "agent-def-456"],
+      "allowed_orgs": ["acme-corp"]
+    }
+    ```
+  </Accordion>
+  <Accordion title="Block a specific agent">
+    ```json DeviceAccessPolicy
+    {
+      "visibility": "public",
+      "denied_agents": ["agent-bad-actor"]
+    }
+    ```
+    `denied_agents` is checked before `allowed_agents`. A denied agent is blocked even if they appear in `allowed_agents`.
+  </Accordion>
+  <Accordion title="Limit session duration">
+    ```json
+    {
+      "deviceId": "rtl-sdr-1",
+      "maxDurationMs": 300000,
+      "allowedCapabilities": [],
+      "disabledCapabilities": []
+    }
+    ```
+    Sessions on `rtl-sdr-1` are capped at 5 minutes (`300000 ms`).
+  </Accordion>
+</AccordionGroup>

@@ -1,0 +1,161 @@
+---
+title: "Adapters"
+description: "Adapters are device-specific plugins that translate OAHL capability calls into hardware protocol operations."
+---
+
+An adapter is the translation layer between the OAHL capability model and the low-level protocol a specific piece of hardware speaks. When an agent executes `camera.capture`, the OAHL server does not know anything about V4L2, USB, or MJPEG—the adapter does. Adapters are independently packaged npm modules that you install and list in `oahl-config.json`.
+
+## The Adapter interface
+
+Every adapter must implement the following five-method TypeScript interface, defined in `@oahl/core`:
+
+```typescript packages/core/src/types.ts
+export interface Adapter {
+  id: string;
+  initialize(): Promise<void>;
+  healthCheck(): Promise<{ status: 'ok' | 'error'; message?: string }>;
+  getDevices(): Promise<Device[]>;
+  getCapabilities(deviceId: string): Promise<Capability[]>;
+  execute(deviceId: string, capabilityName: string, args: any): Promise<any | ExecutionResult>;
+}
+```
+
+<CardGroup cols={2}>
+  <Card title="initialize()" icon="play">
+    Called once when the node starts. Opens hardware connections, allocates buffers, and performs any one-time setup.
+  </Card>
+  <Card title="healthCheck()" icon="heart-pulse">
+    Returns `ok` or `error` with an optional message. The node polls this periodically and surfaces the result in device status.
+  </Card>
+  <Card title="getDevices()" icon="hard-drive">
+    Returns the list of `Device` objects this adapter manages. Called on startup and when the node re-registers.
+  </Card>
+  <Card title="getCapabilities(deviceId)" icon="list">
+    Returns the `Capability` descriptors for a specific device. Used to build the capability inventory agents discover.
+  </Card>
+  <Card title="execute(deviceId, capabilityName, args)" icon="bolt">
+    Translates a named capability call with arguments into a hardware protocol operation and returns a structured result.
+  </Card>
+</CardGroup>
+
+## First-party adapters
+
+OAHL ships three first-party adapters:
+
+<CardGroup cols={3}>
+  <Card title="@oahl/adapter-mock" icon="flask">
+    In-memory simulation adapter. Returns predictable fake data for all capabilities. Use this for development and testing without real hardware.
+  </Card>
+  <Card title="@oahl/adapter-usb-camera" icon="camera">
+    Captures still images from a USB or built-in camera via V4L2/webcam bindings. Exposes the `camera.capture` capability.
+  </Card>
+  <Card title="@oahl/adapter-rtl-sdr" icon="radio">
+    Interfaces with RTL-SDR USB dongles. Exposes `radio.scan`, `radio.measure_power`, and related spectrum-analysis capabilities.
+  </Card>
+</CardGroup>
+
+## Transport plugins
+
+Some adapters need help managing the physical connection to hardware. OAHL provides transport plugins that handle the low-level connection lifecycle:
+
+| Plugin | Protocol | Use case |
+|---|---|---|
+| `@oahl/transport-serial` | UART / USB serial | Microcontrollers, GPS modules, lab instruments |
+| `@oahl/transport-adb` | Android Debug Bridge | Android phones and tablets |
+
+Transport plugins implement the `TransportProvider` interface from `@oahl/core` and are referenced by adapters—not configured directly in `oahl-config.json`.
+
+<Note>
+  Bluetooth Low Energy (`transport-ble`) and MQTT/TCP support are planned for a future release.
+</Note>
+
+## Installing and registering adapters
+
+Adapters are installed as npm packages and then declared in the `plugins` array of `oahl-config.json`.
+
+<Steps>
+  <Step title="Install the adapter package">
+    ```bash
+    npm install @oahl/adapter-usb-camera
+    ```
+    Or use the OAHL CLI:
+    ```bash
+    oahl install @oahl/adapter-usb-camera
+    ```
+  </Step>
+  <Step title="Add it to plugins">
+    Open `oahl-config.json` and add the package name to the `plugins` array:
+    ```json oahl-config.json
+    {
+      "node_id": "my-laptop-01",
+      "plugins": [
+        "@oahl/adapter-mock",
+        "@oahl/adapter-usb-camera"
+      ]
+    }
+    ```
+  </Step>
+  <Step title="Assign the adapter to a device">
+    In the `devices` array, set the `adapter` field to match the adapter's registered type name:
+    ```json oahl-config.json
+    {
+      "devices": [
+        {
+          "id": "usb-cam-1",
+          "type": "camera",
+          "adapter": "usb-camera"
+        }
+      ]
+    }
+    ```
+  </Step>
+  <Step title="Start (or restart) the node">
+    ```bash
+    oahl start
+    ```
+    The node calls `initialize()` on each loaded adapter at startup.
+  </Step>
+</Steps>
+
+## Building a custom adapter
+
+Any npm package that exports a class implementing the `Adapter` interface can be registered as an adapter. Import the interface from `@oahl/core`:
+
+```typescript my-custom-adapter/index.ts
+import { Adapter, Device, Capability, ExecutionResult } from '@oahl/core';
+
+export class MyCustomAdapter implements Adapter {
+  id = 'my-custom-adapter';
+
+  async initialize(): Promise<void> {
+    // open hardware connection
+  }
+
+  async healthCheck(): Promise<{ status: 'ok' | 'error'; message?: string }> {
+    return { status: 'ok' };
+  }
+
+  async getDevices(): Promise<Device[]> {
+    return [{ id: 'my-device-1', type: 'sensor', name: 'My Sensor', isPublic: true }];
+  }
+
+  async getCapabilities(deviceId: string): Promise<Capability[]> {
+    return [
+      {
+        name: 'sensor.read',
+        description: 'Read the current sensor value.',
+        schema: { type: 'object', properties: {} },
+      },
+    ];
+  }
+
+  async execute(deviceId: string, capabilityName: string, args: any): Promise<ExecutionResult> {
+    // translate to hardware protocol and return result
+    return { status: 'success', data: { value: 42 } };
+  }
+}
+```
+
+<Tip>
+  Publish your adapter to npm with an `oahl-manifest.json` at the package root to have it listed automatically in the [Adapter Registry](https://github.com/fredabila/oahl/tree/main/registry).
+</Tip>

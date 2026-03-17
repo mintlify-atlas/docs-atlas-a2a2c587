@@ -1,0 +1,133 @@
+---
+title: "Sessions"
+description: "Reserve and release exclusive hardware sessions using POST /v1/requests and POST /v1/sessions/{id}/stop."
+---
+
+Sessions provide exclusive access to a hardware device. Only one active session can exist per device at a time, preventing conflicting commands from different agents.
+
+The session lifecycle is:
+
+1. **Reserve** — `POST /v1/requests` allocates the session and returns a `session_id`.
+2. **Execute** — use the `session_id` to call [execute endpoints](/api/execution).
+3. **Release** — `POST /v1/sessions/{session_id}/stop` frees the device.
+
+<Warning>
+  Always call `POST /v1/sessions/{session_id}/stop` when your agent is done — including on error paths. Unreleased sessions hold the device exclusively and block other agents.
+</Warning>
+
+---
+
+## `POST /v1/requests` — Request a session
+
+Allocates an exclusive session on a hardware device. Either `capability` or `device_id` must be provided.
+
+### Authentication
+
+Requires an **agent API key** as a bearer token. See [Authentication](/api/authentication).
+
+### Request headers (optional)
+
+| Header | Description |
+|--------|-------------|
+| `x-agent-id` | Self-asserted agent identifier for access policy evaluation |
+| `x-agent-org-id` | Self-asserted organisation ID |
+| `x-agent-roles` | Comma-separated role list |
+
+### Request body
+
+<ParamField body="capability" type="string">
+  Required if `device_id` is omitted. The cloud selects any available device that supports this capability. Example: `"camera.capture"`.
+</ParamField>
+
+<ParamField body="device_id" type="string">
+  Target a specific device by its ID. Takes precedence over capability-based matching when provided.
+</ParamField>
+
+<ParamField body="node_id" type="string">
+  Restrict selection to a specific hardware node. Requires `device_id` to be set.
+</ParamField>
+
+### Example request
+
+```bash
+curl -X POST https://oahl.onrender.com/v1/requests \
+  -H "Authorization: Bearer oahl_agent_abc123..." \
+  -H "Content-Type: application/json" \
+  -d '{"capability": "camera.capture"}'
+```
+
+Or to target a specific device:
+
+```bash
+curl -X POST https://oahl.onrender.com/v1/requests \
+  -H "Authorization: Bearer oahl_agent_abc123..." \
+  -H "Content-Type: application/json" \
+  -d '{"device_id": "cam-01", "node_id": "node-abc123"}'
+```
+
+### Response
+
+**`200 OK`** — Session allocated successfully.
+
+```json
+{
+  "session_id": "sess-3f7a2c1d-...",
+  "status": "accepted"
+}
+```
+
+<ResponseField name="session_id" type="string">
+  Opaque session identifier. Pass this as the `session_id` path parameter in all subsequent session calls.
+</ResponseField>
+
+<ResponseField name="status" type="string">
+  Always `"accepted"` on success.
+</ResponseField>
+
+### Error responses
+
+| Status | Condition |
+|--------|-----------|
+| `400 Bad Request` | Neither `capability` nor `device_id` was provided, or another parameter is invalid |
+| `401 Unauthorized` | Missing or invalid agent API key |
+| `403 Forbidden` | The agent identity does not meet the device's access policy |
+| `404 Not Found` | No available hardware matching the request was found |
+
+---
+
+## `POST /v1/sessions/{session_id}/stop` — Stop a session
+
+Releases the session and makes the device available for other agents.
+
+### Authentication
+
+Requires an **agent API key** as a bearer token.
+
+### Path parameter
+
+<ParamField path="session_id" type="string" required>
+  The opaque session identifier returned by `POST /v1/requests`.
+</ParamField>
+
+### Example request
+
+```bash
+curl -X POST https://oahl.onrender.com/v1/sessions/sess-3f7a2c1d-.../stop \
+  -H "Authorization: Bearer oahl_agent_abc123..."
+```
+
+### Response
+
+**`200 OK`**
+
+```json
+{ "status": "stopped" }
+```
+
+<ResponseField name="status" type="string">
+  Always `"stopped"` on success.
+</ResponseField>
+
+<Tip>
+  Call this endpoint in a `finally` block (or equivalent) in your agent code so the device is always released, even when an execution error occurs.
+</Tip>

@@ -1,0 +1,305 @@
+---
+title: "Direct API integration"
+description: "Use the OAHL REST API directly from your agent to discover hardware, manage sessions, and execute capabilities."
+---
+
+The direct API pattern gives you full control over every step of the hardware session lifecycle. Use it when you need precise error handling, custom retry logic, or are integrating OAHL into an existing HTTP client pipeline.
+
+<Tip>
+  Use the `@oahl/sdk` (TypeScript) or `oahl` (Python) packages instead of hand-rolling HTTP requests. Both are thin wrappers around `fetch`/`requests` that add auth headers and handle error status codes.
+</Tip>
+
+## Session lifecycle
+
+Every hardware interaction follows the same five-step pattern:
+
+<Steps>
+  <Step title="Authenticate with a Bearer token">
+    All agent-facing endpoints require `Authorization: Bearer <agent_api_key>`. Set this once on your client instance.
+
+    <CodeGroup>
+    ```typescript TypeScript
+    import { CloudClient } from "@oahl/sdk";
+
+    const client = new CloudClient(
+      "https://oahl.onrender.com",
+      process.env.OAHL_AGENT_API_KEY
+    );
+    ```
+
+    ```python Python
+    from oahl import CloudClient
+
+    client = CloudClient(
+        base_url="https://oahl.onrender.com",
+        agent_api_key=os.environ["OAHL_AGENT_API_KEY"]
+    )
+    ```
+    </CodeGroup>
+  </Step>
+
+  <Step title="Discover capabilities">
+    Call `GET /v1/capabilities` to find hardware that matches your requirements. Filter by capability name, device type, provider, or node.
+
+    <CodeGroup>
+    ```typescript TypeScript
+    const response = await client.getCapabilities({
+      capability: "camera.capture",
+      type: "camera"
+    });
+
+    // response.devices is an array of DeviceDescriptor
+    for (const device of response.devices) {
+      console.log(device.id, device.status); // "cam-gh-01", "available"
+    }
+    ```
+
+    ```python Python
+    response = client.get_capabilities(query={
+        "capability": "camera.capture",
+        "type": "camera"
+    })
+
+    for device in response["devices"]:
+        print(device["id"], device["status"])  # "cam-gh-01", "available"
+    ```
+    </CodeGroup>
+
+    **Example response:**
+    ```json
+    {
+      "timestamp": 1710000000000,
+      "devices": [
+        {
+          "id": "cam-gh-01",
+          "type": "camera",
+          "provider": "accra-lab",
+          "node_id": "node-accra-1",
+          "status": "available",
+          "capabilities": [
+            {
+              "name": "camera.capture",
+              "description": "Capture a still image",
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "resolution": { "type": "string", "enum": ["720p", "1080p", "4k"] },
+                  "format": { "type": "string", "enum": ["jpg", "png"] }
+                },
+                "required": ["resolution"]
+              }
+            }
+          ],
+          "pricing": {
+            "currency": "USD",
+            "rate_per_execution": 0.002
+          }
+        }
+      ],
+      "pagination": {
+        "page": 1,
+        "page_size": 25,
+        "total": 1,
+        "has_next": false
+      }
+    }
+    ```
+
+    <Note>
+      The `pricing` block on each device shows `rate_per_execution` or `rate_per_minute`. Check this against your budget before reserving a session.
+    </Note>
+  </Step>
+
+  <Step title="Request a session">
+    Call `POST /v1/requests` to allocate an exclusive session on a device. You can target a specific device by `device_id` or let the cloud pick any device that supports the requested capability.
+
+    <CodeGroup>
+    ```typescript TypeScript
+    // Option A: target a specific device
+    const sessionReq = await client.requestSession({
+      capability: "camera.capture",
+      device_id: "cam-gh-01"
+    });
+
+    // Option B: let the cloud find any matching device
+    const sessionReq = await client.requestSession({
+      capability: "camera.capture"
+    });
+
+    const { session_id } = sessionReq; // "sess-3f7a2c1d-..."
+    ```
+
+    ```python Python
+    # Option A: target a specific device
+    session_req = client.request_session({
+        "capability": "camera.capture",
+        "device_id": "cam-gh-01"
+    })
+
+    # Option B: let the cloud find any matching device
+    session_req = client.request_session({
+        "capability": "camera.capture"
+    })
+
+    session_id = session_req["session_id"]  # "sess-3f7a2c1d-..."
+    ```
+    </CodeGroup>
+
+    **Example response:**
+    ```json
+    {
+      "session_id": "sess-3f7a2c1d-8b2e-4f1a-9c3d-7e6f5a4b3c2d",
+      "status": "accepted"
+    }
+    ```
+  </Step>
+
+  <Step title="Execute a capability">
+    Call `POST /v1/sessions/{session_id}/execute` with the capability name and params. The cloud relay dispatches the command to the hardware node and returns the result synchronously.
+
+    <CodeGroup>
+    ```typescript TypeScript
+    const result = await client.execute(session_id, {
+      capability: "camera.capture",
+      params: {
+        resolution: "1080p",
+        format: "jpg"
+      },
+      timeout_ms: 60000
+    });
+
+    if (result.status === "success") {
+      console.log(result.data); // capability-specific payload
+    } else if (result.status === "error") {
+      console.error(result.error.message);
+      // Check result.error.agent_recovery_hints for actionable suggestions
+    }
+    ```
+
+    ```python Python
+    result = client.execute(session_id, {
+        "capability": "camera.capture",
+        "params": {
+            "resolution": "1080p",
+            "format": "jpg"
+        },
+        "timeout_ms": 60000
+    })
+
+    if result["status"] == "success":
+        print(result["data"])  # capability-specific payload
+    elif result["status"] == "error":
+        print(result["error"]["message"])
+        # Check result["error"]["agent_recovery_hints"] for actionable suggestions
+    ```
+    </CodeGroup>
+
+    **Example response:**
+    ```json
+    {
+      "schema_version": "1.0",
+      "operation_id": "cmd-3a7f92bc-1234",
+      "status": "success",
+      "completion": {
+        "done": true,
+        "state": "completed"
+      },
+      "capability": "camera.capture",
+      "device_id": "cam-gh-01",
+      "timestamp": "2026-03-17T10:00:00.000Z",
+      "data": {
+        "image_url": "https://cdn.oahl.io/captures/cmd-3a7f92bc-1234.jpg",
+        "width": 1920,
+        "height": 1080
+      },
+      "meta": {
+        "relay_latency_ms": 142,
+        "node_id": "node-accra-1"
+      }
+    }
+    ```
+
+    The response headers also include `x-oahl-relay-mode` (`websocket`, `websocket-late`, or `polling`) and `x-oahl-request-id` to identify the transport path used.
+  </Step>
+
+  <Step title="Batch execute (optional)">
+    To reduce round-trip overhead when issuing multiple commands against the same device, use `POST /v1/sessions/{session_id}/execute-batch`. The batch executes sequentially and stops on the first error by default.
+
+    <CodeGroup>
+    ```typescript TypeScript
+    const batchResult = await client.execute(session_id, {
+      capability: "execute-batch",
+      params: {
+        commands: [
+          { capability: "arm.move", params: { x: 10, y: 0 } },
+          { capability: "arm.close", params: {} }
+        ],
+        timeout_ms: 120000
+      }
+    });
+    ```
+
+    ```python Python
+    # Direct HTTP call — execute-batch has its own endpoint
+    import requests
+
+    requests.post(
+        f"https://oahl.onrender.com/v1/sessions/{session_id}/execute-batch",
+        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        json={
+            "commands": [
+                {"capability": "arm.move", "params": {"x": 10, "y": 0}},
+                {"capability": "arm.close", "params": {}}
+            ],
+            "timeout_ms": 120000
+        }
+    )
+    ```
+    </CodeGroup>
+  </Step>
+
+  <Step title="Stop the session">
+    Always call `POST /v1/sessions/{session_id}/stop` when finished — on both success and failure paths. This releases the device so other agents can reserve it.
+
+    <CodeGroup>
+    ```typescript TypeScript
+    // Always stop — even after errors
+    try {
+      const result = await client.execute(session_id, { capability: "camera.capture", params: {} });
+      // handle result
+    } finally {
+      await client.stopSession(session_id);
+    }
+    ```
+
+    ```python Python
+    # Always stop — even after errors
+    try:
+        result = client.execute(session_id, {"capability": "camera.capture", "params": {}})
+        # handle result
+    finally:
+        client.stop_session(session_id)
+    ```
+    </CodeGroup>
+
+    **Example response:**
+    ```json
+    { "status": "stopped" }
+    ```
+  </Step>
+</Steps>
+
+## Error reference
+
+| Status | Meaning | Action |
+|---|---|---|
+| `401` | Missing or invalid API key | Check your Bearer token |
+| `403` | Agent identity denied by device access policy | Check `x-agent-id` and device `allowed_agents` |
+| `404` on `/v1/requests` | No matching available hardware | Broaden discovery filters or try a different capability |
+| `400` on execute | Invalid params or capability mismatch | Validate params against the capability `schema` |
+| `504` | Hardware node timeout | Attempt `stopSession`, surface timeout, optionally retry |
+| `status: "error"` in body | Hardware execution failed | Read `error.agent_recovery_hints` for recovery instructions |
+
+<Warning>
+  A `504` response means the hardware node did not respond. The session may still be active — always attempt `stopSession` in a finally block to release the device.
+</Warning>

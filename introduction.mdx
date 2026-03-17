@@ -1,0 +1,111 @@
+---
+title: "Introduction"
+description: "Open Agent Hardware Layer (OAHL) — the open-source framework for exposing real-world hardware to AI agents through standardized APIs."
+---
+
+## What is OAHL?
+
+Open Agent Hardware Layer (OAHL) is an open-source framework that gives AI agents access to real physical hardware through a standardized API. It lets hardware owners connect devices — cameras, software-defined radios, sensors, phones, robots — to a node, declare their capabilities, and make them available to AI agents safely and consistently.
+
+Today, AI agents can use software tools and cloud APIs, but they typically cannot interact with the physical world without custom integration work for every new device. OAHL solves this with a universal hardware abstraction layer.
+
+## Who is OAHL for?
+
+<CardGroup cols={3}>
+  <Card title="Hardware Owners" icon="microchip">
+    Connect your physical devices to the OAHL network and expose their capabilities to AI agents worldwide through the cloud registry.
+  </Card>
+  <Card title="Agent Developers" icon="robot">
+    Discover, reserve, and execute hardware capabilities from your AI agents without writing any device-specific integration code.
+  </Card>
+  <Card title="Platform Operators" icon="building">
+    Build agent-to-hardware marketplaces, run cloud registries, and operate policy-governed multi-node fleets of hardware.
+  </Card>
+</CardGroup>
+
+## Core concepts
+
+OAHL is built around a small set of composable primitives:
+
+| Concept | Description |
+|---------|-------------|
+| **Node** | A service installed on a machine connected to hardware. Registers with the Cloud Registry and executes agent commands. |
+| **Adapter** | A device-specific plugin that translates OAHL standard capability calls into hardware protocol operations. |
+| **Capability** | A standardized named action such as `camera.capture` or `radio.scan`. |
+| **Session** | A controlled, exclusive allocation of a hardware resource for a specific agent request. |
+| **Policy** | Declarative rules that control which agents can access a device and what they can do with it. |
+| **Cloud Registry** | The central hub where nodes register so remote agents can discover and request hardware globally. |
+
+## How it works
+
+```
+AI Agent  ──►  Cloud Registry  ──►  Local Node  ──►  Adapter  ──►  Physical Hardware
+              (discover + relay)    (execute)        (translate)
+```
+
+1. An agent calls `GET /v1/capabilities` to discover available hardware.
+2. The agent calls `POST /v1/requests` to reserve a session on a specific device.
+3. The cloud relay routes the session to the appropriate node.
+4. The agent calls `POST /v1/sessions/{id}/execute` to invoke a capability.
+5. The adapter translates the OAHL call to a hardware-specific operation and returns the result.
+6. The agent calls `POST /v1/sessions/{id}/stop` to release the device.
+
+## Key features
+
+<CardGroup cols={2}>
+  <Card title="Standardized capability API" icon="plug">
+    Dot-notation capability naming (`camera.capture`, `radio.scan`, `robot.arm.move`) with JSON Schema-validated parameters.
+  </Card>
+  <Card title="Pluggable adapter system" icon="puzzle-piece">
+    Implement the 5-method `Adapter` interface to connect any hardware. Scaffold new adapters in seconds with `oahl create-adapter`.
+  </Card>
+  <Card title="Cloud relay registry" icon="cloud">
+    Nodes register with the cloud so agents anywhere in the world can discover and access hardware through a single API endpoint.
+  </Card>
+  <Card title="Session-based access control" icon="lock">
+    Exclusive sessions prevent conflicting commands. Declarative access policies control which agents and organizations can use each device.
+  </Card>
+  <Card title="MCP server built-in" icon="brain">
+    Run `oahl mcp` to expose all hardware capabilities as native MCP Tools for Claude, LangChain, Cursor, and any MCP-compatible agent.
+  </Card>
+  <Card title="Official SDKs" icon="code">
+    JavaScript/TypeScript and Python SDKs with `OahlClient` (local) and `CloudClient` (cloud relay) for seamless agent integration.
+  </Card>
+</CardGroup>
+
+## Repository layout
+
+```
+oahl/
+├── packages/
+│   ├── cli/          # @oahl/cli — CLI tool (oahl init, start, install, mcp, ...)
+│   ├── core/         # @oahl/core — Domain interfaces, PolicyEngine, SessionManager
+│   ├── server/       # @oahl/server — HTTP REST API server
+│   ├── cloud/        # @oahl/cloud — Cloud registry and relay
+│   ├── sdk-js/       # @oahl/sdk — JavaScript/TypeScript SDK
+│   └── web/          # @oahl/web — Product web UI
+├── adapters/
+│   ├── adapter-mock/        # Mock adapter for testing
+│   ├── adapter-usb-camera/  # USB camera adapter
+│   └── adapter-rtl-sdr/     # RTL-SDR radio adapter
+├── sdk-python/       # Python SDK (oahl on PyPI)
+├── openapi.yaml      # Full OpenAPI 3.0 specification
+└── docs/             # Extended documentation
+```
+
+## Quick links
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Connect your first hardware device and expose it to AI agents in under 5 minutes.
+  </Card>
+  <Card title="Architecture" icon="diagram-project" href="/architecture">
+    Understand how nodes, adapters, the cloud relay, and agents fit together.
+  </Card>
+  <Card title="API Reference" icon="code" href="/api/overview">
+    Full REST API documentation for agent and provider endpoints.
+  </Card>
+  <Card title="Adapter Development" icon="wrench" href="/adapters/overview">
+    Build and publish your own hardware adapter.
+  </Card>
+</CardGroup>

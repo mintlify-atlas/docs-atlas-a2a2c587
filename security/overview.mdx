@@ -1,0 +1,160 @@
+---
+title: "Security overview"
+description: "OAHL's layered security model for safely exposing hardware to AI agents."
+---
+
+OAHL bridges software agents and physical hardware, so security is a primary design concern. Every request travels through multiple enforcement layers before it reaches a device, and hardware owners control exactly what each agent can do.
+
+## Security layers
+
+<CardGroup cols={2}>
+  <Card title="Container sandboxing" icon="box">
+    Running the OAHL node in Docker isolates it from the host OS. Only the specific hardware devices you explicitly mount are reachable inside the container.
+  </Card>
+  <Card title="Bearer token authentication" icon="key">
+    Agent-facing endpoints require `Authorization: Bearer <agent_api_key>`. Provider-facing endpoints use a separate `provider_api_key`. The two key spaces are strictly distinct.
+  </Card>
+  <Card title="Device access policies" icon="shield">
+    Each device carries a `DeviceAccessPolicy` with visibility controls and per-agent allow/deny lists. The cloud enforces this policy on every discovery and session-request call.
+  </Card>
+  <Card title="Session exclusivity" icon="lock">
+    The `SessionManager` ensures each physical device can have at most one active session at a time. Concurrent reservation attempts are rejected with an error.
+  </Card>
+</CardGroup>
+
+## Authentication
+
+OAHL uses two separate bearer token namespaces:
+
+| Endpoint group | Token | Where to obtain |
+|---|---|---|
+| Agent endpoints (`/v1/capabilities`, `/v1/requests`, `/v1/sessions/*`) | `agent_api_key` | Developer portal — `POST /v1/portal/agents` |
+| Provider endpoints (`/v1/provider/*`) | `provider_api_key` | Set in `oahl-config.json` and the cloud registration flow |
+
+Tokens are validated against Redis on every request. An invalid or missing token returns `HTTP 401`.
+
+### Agent identity headers
+
+Agents may include optional identity headers to enable access-policy enforcement:
+
+| Header | Description |
+|---|---|
+| `x-agent-id` | Stable agent or owner identifier |
+| `x-agent-org-id` | Organisation the agent belongs to |
+| `x-agent-roles` | Comma-separated role list |
+
+<Warning>
+These headers are **self-asserted in v1** and not cryptographically bound to the bearer token. Any HTTP client can supply any value. See [Known gaps](#known-gaps) below.
+</Warning>
+
+## Docker sandboxing
+
+The OAHL server should run in Docker to provide OS-level isolation. The `devices` mapping in `docker-compose.yml` controls which hardware is exposed to the container. Only mount the specific device files your adapters require.
+
+```yaml
+services:
+  oahl-node:
+    image: oahl/node:latest
+    devices:
+      - /dev/ttyUSB0:/dev/ttyUSB0   # Only the serial device your adapter needs
+    environment:
+      PROVIDER_API_KEY: ${PROVIDER_API_KEY}
+```
+
+<Tip>
+Do not mount `/dev` wholesale. Declare each device explicitly so a compromised adapter cannot enumerate other hardware on the host.
+</Tip>
+
+## Local policy engine
+
+Beyond cloud-layer access policies, the OAHL node runs a local `PolicyEngine` that enforces per-device `allowedCapabilities` and `disabledCapabilities` lists before any adapter execution. An agent cannot invoke a capability that has been administratively disabled at the node level, even if it holds a valid session.
+
+This is your last line of defence for preventing dangerous hardware operations. Disable any capabilities that could physically damage hardware or cause harm.
+
+## Network isolation
+
+The local OAHL node server should run on an isolated network segment. Do not expose the local node port directly to the public internet without an authentication proxy or VPN in front of it.
+
+## Known gaps
+
+The following controls are planned for Phase 4 but are not yet implemented. Apply the compensating controls listed below until they are available.
+
+<AccordionGroup>
+  <Accordion title="Self-asserted agent identity (no cryptographic binding)">
+    `x-agent-id`, `x-agent-org-id`, and `x-agent-roles` are read directly from request headers with no signature verification.
+
+    **Compensating control:** Only add agents to `allowed_agents` lists when their API keys are provisioned through a controlled process that also distributes the agreed identity values.
+
+    **Planned fix:** Signed JWT agent identity bound to the bearer token, or mutual TLS (mTLS) client certificate verification.
+  </Accordion>
+  <Accordion title="No replay protection">
+    Request payloads carry no nonce or HMAC signature. A captured API request could be replayed within the session validity window.
+
+    **Compensating control:** Use short session lifetimes and enforce HTTPS/TLS on all cloud relay connections.
+
+    **Planned fix:** Short-lived nonces or HMAC request signatures.
+  </Accordion>
+  <Accordion title="No rate limiting">
+    There is no per-agent or per-node rate limiting on the cloud relay. A misbehaving agent can flood the system.
+
+    **Planned fix:** Rate limiting middleware with Redis-backed counters returning `HTTP 429` with `Retry-After` headers.
+  </Accordion>
+  <Accordion title="No node attestation">
+    When a node registers via `POST /v1/provider/nodes/register`, the cloud accepts the registration based on `provider_api_key` alone. There is no cryptographic proof that the node is running unmodified OAHL software.
+
+    **Planned fix:** Signed node metadata, hardware trust level classification (attested vs. self-declared), and a formal attestation profile.
+  </Accordion>
+  <Accordion title="No cloud-side schema validation">
+    Execution `params` are forwarded from the cloud to the node without JSON Schema validation at the cloud layer. Schema enforcement relies on the adapter and the calling agent.
+
+    **Planned fix:** Cloud-side validation of `params` against the capability's registered JSON Schema before forwarding.
+  </Accordion>
+  <Accordion title="Portal PIN stored in plaintext">
+    The developer portal (`/v1/portal/auth`) stores 6-digit PINs in Redis in plaintext.
+
+    **Compensating control:** Do not use the developer portal for production systems without first hashing PINs (e.g., bcrypt).
+
+    **Planned fix:** bcrypt or Argon2 hashing for portal authentication credentials.
+  </Accordion>
+</AccordionGroup>
+
+## Security roadmap
+
+| Control | Status |
+|---|---|
+| Bearer token authentication | Implemented |
+| Device access policy (visibility, allow/deny lists) | Implemented |
+| Session exclusivity | Implemented |
+| Local policy engine (capability allow/deny) | Implemented |
+| Signed JWT / mTLS agent identity | Planned (Phase 4) |
+| Replay protection / nonces | Planned (Phase 4) |
+| Rate limiting (HTTP 429) | Planned (Phase 4) |
+| Node attestation | Planned (Phase 4) |
+| Cloud-side JSON Schema validation | Planned (Phase 4) |
+| Portal PIN hashing | Needed |
+
+## Production checklist
+
+<Steps>
+  <Step title="Run the node in Docker">
+    Use the official Docker image. Mount only the specific device files your adapters require via the `devices` key in `docker-compose.yml`.
+  </Step>
+  <Step title="Isolate the node network">
+    Place the OAHL node on an isolated LAN segment or behind a VPN. Never expose the local node port directly to the public internet.
+  </Step>
+  <Step title="Enforce HTTPS on all cloud relay connections">
+    Ensure the `cloud_url` in `oahl-config.json` uses `https://` and that your environment enforces TLS. This is the primary compensating control for replay attacks.
+  </Step>
+  <Step title="Use private or shared visibility for sensitive devices">
+    Set `visibility: private` or `visibility: shared` for any device that should not be accessible to arbitrary agents. See [Access policies](/security/policies).
+  </Step>
+  <Step title="Disable dangerous capabilities at the node level">
+    Use `disabledCapabilities` in the `policies` array of `oahl-config.json` to prevent agents from invoking capabilities that could physically damage hardware.
+  </Step>
+  <Step title="Use short session lifetimes">
+    Set `max_session_minutes` on devices that handle sensitive operations to limit the replay window.
+  </Step>
+  <Step title="Control API key provisioning">
+    Only issue agent API keys through a controlled process where the provisioning system also records and distributes the agreed `x-agent-id` values. This is the compensating control for the lack of cryptographic identity binding.
+  </Step>
+</Steps>

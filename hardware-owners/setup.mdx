@@ -1,0 +1,246 @@
+---
+title: "Setting up your node"
+description: "Install and configure an OAHL node to connect your hardware devices to the network."
+---
+
+This guide walks you through installing the OAHL CLI, authenticating, running the setup wizard, and getting your first hardware device online.
+
+<Steps>
+  <Step title="Prerequisites">
+    Before you start, make sure your machine meets the following requirements:
+
+    - **Node.js 18 or later** — [nodejs.org](https://nodejs.org)
+    - **npm** — bundled with Node.js
+    - Physical access to supported hardware (USB webcam, RTL-SDR, serial sensor, etc.)
+    - The correct vendor drivers installed for your device (e.g., `/dev/video0` visible for a webcam)
+
+    <Info>
+      OAHL does not replace vendor drivers. It wraps them in a standard capability interface. Confirm your host machine can already access the hardware before continuing.
+    </Info>
+  </Step>
+
+  <Step title="Install the CLI">
+    Install the OAHL toolkit globally via npm:
+
+    ```bash
+    npm install -g @fredabila/oahl
+    ```
+
+    Verify the installation:
+
+    ```bash
+    oahl --version
+    ```
+  </Step>
+
+  <Step title="Authenticate">
+    Link this machine to your OAHL Developer Portal account:
+
+    ```bash
+    oahl login
+    ```
+
+    You will be prompted for:
+
+    - **Email address** — your Developer Portal email
+    - **6-digit PIN** — your account PIN
+    - **Remember credentials** — saves a `.oahl-session.json` file locally for future commands
+
+    ```
+    🔐 Provider Authentication Required
+    Enter your Developer Portal credentials to link this node to your account.
+
+    ✔ Email Address: you@example.com
+    ✔ 6-Digit PIN: ******
+    ✔ Remember these credentials on this machine? yes
+    ✅ Credentials saved to .oahl-session.json
+
+    ✨ Successfully logged in as you@example.com
+    ```
+
+    <Note>
+      To remove saved credentials, run `oahl logout`. This deletes `.oahl-session.json` from the current directory.
+    </Note>
+  </Step>
+
+  <Step title="Run the setup wizard">
+    Generate your `oahl-config.json` interactively:
+
+    ```bash
+    oahl init
+    ```
+
+    The wizard asks:
+
+    1. A unique ID for this node (e.g. `my-laptop-01`)
+    2. Your provider name (e.g. `Accra Test Lab`)
+    3. What type of hardware to connect first — USB Camera, RTL-SDR, Mock sensor, or skip
+
+    After answering, the wizard writes `oahl-config.json` to the current directory and prints next steps:
+
+    ```
+    🤖 Welcome to the OAHL Node Setup Wizard!
+
+    ✅ Successfully generated configuration at: /home/user/oahl-config.json
+
+    🚀 Next steps:
+    1. Review your newly created oahl-config.json
+    2. Start the local node using:
+       oahl start
+    ```
+  </Step>
+
+  <Step title="Review oahl-config.json">
+    Open the generated `oahl-config.json` and verify the values are correct before starting the node:
+
+    ```json oahl-config.json
+    {
+      "node_id": "my-laptop-01",
+      "cloud_url": "https://oahl.onrender.com",
+      "provider_api_key": "123456",
+      "provider": {
+        "name": "My Personal Test Node"
+      },
+      "plugins": [
+        "@oahl/adapter-mock",
+        "@oahl/adapter-usb-camera"
+      ],
+      "devices": [
+        {
+          "id": "camera-01",
+          "type": "camera",
+          "adapter": "usb-camera",
+          "capabilities": ["camera.capture", "camera.stream"],
+          "local_path": "/dev/video0",
+          "policy": {
+            "public": false,
+            "max_session_minutes": 30
+          }
+        }
+      ]
+    }
+    ```
+
+    Replace `provider_api_key` with your real API key from the Developer Portal before proceeding.
+
+    <Warning>
+      Do not commit `oahl-config.json` to version control if it contains a real `provider_api_key`.
+    </Warning>
+  </Step>
+
+  <Step title="Start the node">
+    Start the local OAHL node daemon:
+
+    ```bash
+    oahl start
+    ```
+
+    The node loads your configuration, registers with the Cloud Registry (if `cloud_url` is set), and begins serving the local HTTP API on port `3000` by default.
+
+    To run on a different port:
+
+    ```bash
+    oahl start --port 8080
+    ```
+
+    To point to a custom config path:
+
+    ```bash
+    oahl start --config /path/to/oahl-config.json
+    ```
+
+    Verify the node is running:
+
+    ```bash
+    curl http://localhost:3000/capabilities
+    ```
+  </Step>
+
+  <Step title="Scan for hardware">
+    To detect connected USB and serial devices and get adapter suggestions:
+
+    ```bash
+    oahl scan-ports
+    ```
+
+    Example output:
+
+    ```
+    🔎 Scanning connected ports/devices...
+    ✅ Detected 2 device(s):
+
+    1. [USB] USB Video Device
+       id: Bus 001 Device 004: ID 046d:0825 Logitech, Inc. Webcam C270
+       status: present
+       vendor: Logitech, Inc.
+       suggested adapter: @oahl/adapter-usb-camera
+       suggested type: camera
+       capability hints: camera.capture
+       config snippet:
+       {"id":"detected-1","type":"camera","adapter":"usb-camera","capabilities":["camera.capture"]}
+
+    2. [SERIAL] /dev/ttyACM0
+       id: /dev/ttyACM0
+       status: present
+       suggested adapter: @oahl/adapter-custom
+       suggested type: serial-device
+       capability hints: device.read, device.write
+       config snippet:
+       {"id":"detected-2","type":"serial-device","adapter":"custom","capabilities":["device.read","device.write"]}
+
+    🧭 Adapter creation flow:
+    1) Use existing suggested adapter where possible.
+    2) For unknown hardware, scaffold one: oahl create-adapter <name>.
+    3) Add hardware.baseline capability for fallback intent handling.
+    4) Install plugin: oahl install @oahl/adapter-<name>.
+    5) Import devices in TUI: oahl tui -> Import detected devices.
+    ```
+
+    For machine-readable output:
+
+    ```bash
+    oahl scan-ports --json
+    ```
+
+    Copy the `config snippet` values into the `devices` array in your `oahl-config.json` to register the detected hardware.
+
+    <Tip>
+      The adapter classifier uses the device name and vendor string to suggest the best match. For unrecognised hardware, it falls back to `@oahl/adapter-custom` with generic `device.read` / `device.write` capabilities.
+    </Tip>
+  </Step>
+
+  <Step title="Manage devices with the TUI (optional)">
+    For an interactive terminal UI to manage your node settings, plugins, devices, and access policies without editing JSON by hand:
+
+    ```bash
+    oahl tui
+    ```
+
+    The TUI menu provides:
+
+    - **Edit node settings** — update `node_id`, provider name, `cloud_url`, and API key
+    - **Manage plugins** — add or remove adapter packages
+    - **Manage devices + access policies** — add, edit, or remove device entries with full access policy control
+    - **Import detected devices from plugins** — auto-populate devices discovered by installed adapters
+    - **Save / Save and exit** — write changes back to `oahl-config.json`
+
+    ```bash
+    # Point to a specific config file
+    oahl tui --config /path/to/oahl-config.json
+    ```
+  </Step>
+</Steps>
+
+## Next steps
+
+<Columns cols={3}>
+  <Card title="Configuration reference" icon="file-json" href="/hardware-owners/configuration">
+    Full reference for every field in `oahl-config.json`.
+  </Card>
+  <Card title="Running with Docker" icon="docker" href="/hardware-owners/docker">
+    Deploy your node in a container with hardware passthrough.
+  </Card>
+  <Card title="Connecting to the Cloud Registry" icon="cloud" href="/hardware-owners/cloud-registry">
+    Register your node so AI agents worldwide can discover your hardware.
+  </Card>
+</Columns>

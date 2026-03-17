@@ -1,0 +1,198 @@
+---
+title: "Execution"
+description: "Execute hardware capabilities within an active session using single or batch execution endpoints."
+---
+
+Execution endpoints relay commands from the agent through the OAHL cloud to the hardware node. The relay transport (WebSocket fast-path or HTTP long-poll fallback) is transparent to the caller — response headers report which path was used.
+
+You must hold an active session (see [Sessions](/api/sessions)) before calling execution endpoints.
+
+---
+
+## `POST /v1/sessions/{session_id}/execute`
+
+Executes a single capability on the hardware device associated with the session.
+
+### Authentication
+
+Requires an **agent API key** as a bearer token. See [Authentication](/api/authentication).
+
+### Path parameter
+
+<ParamField path="session_id" type="string" required>
+  The opaque session identifier returned by `POST /v1/requests`.
+</ParamField>
+
+### Request body
+
+<ParamField body="capability" type="string" required>
+  The capability to invoke. Must match a capability name declared by the device. Example: `"camera.capture"`.
+</ParamField>
+
+<ParamField body="params" type="object">
+  Arguments for the capability. Validated against the capability's JSON Schema (`CapabilityDescriptor.schema`). Omit or pass `{}` if the capability takes no parameters.
+</ParamField>
+
+<ParamField body="timeout_ms" type="integer">
+  Override the default relay timeout in milliseconds. The cloud waits this long for the node to return a result before responding with `504`. Default is approximately 30 000 ms.
+
+  Example: `30000`.
+</ParamField>
+
+### Request headers (optional)
+
+| Header | Description |
+|--------|-------------|
+| `x-agent-id` | Self-asserted agent identifier |
+| `x-agent-org-id` | Self-asserted organisation ID |
+| `x-agent-roles` | Comma-separated role list |
+
+### Example request
+
+```bash
+curl -X POST https://oahl.onrender.com/v1/sessions/sess-3f7a2c1d-.../execute \
+  -H "Authorization: Bearer oahl_agent_abc123..." \
+  -H "Content-Type: application/json" \
+  -d '{
+    "capability": "camera.capture",
+    "params": { "resolution": "1080p", "format": "jpeg" },
+    "timeout_ms": 30000
+  }'
+```
+
+### Response
+
+**`200 OK`** — Execution result envelope.
+
+Response headers:
+
+| Header | Values | Description |
+|--------|--------|-------------|
+| `x-oahl-relay-mode` | `websocket`, `websocket-late`, `polling` | Transport path used |
+| `x-oahl-request-id` | `string` | Opaque command identifier |
+
+```json
+{
+  "schema_version": "1.0",
+  "operation_id": "cmd-3a7f92bc-1234",
+  "status": "success",
+  "completion": { "done": true, "state": "completed", "progress_pct": 100 },
+  "capability": "camera.capture",
+  "device_id": "cam-01",
+  "timestamp": "2026-03-17T12:00:00.000Z",
+  "data": {
+    "image_url": "https://storage.example.com/captures/img-001.jpeg",
+    "width": 1920,
+    "height": 1080
+  },
+  "error": null,
+  "meta": {
+    "adapter_id": "adapter-usb-camera",
+    "relay_latency_ms": 142,
+    "node_id": "node-abc123"
+  }
+}
+```
+
+See [ExecutionResult schema](/api/schemas/execution-result) for the full field reference.
+
+### Error responses
+
+| Status | Condition |
+|--------|-----------|
+| `404 Not Found` | Session does not exist or has expired |
+| `504 Gateway Timeout` | The hardware node did not respond within the timeout window. Response header `x-oahl-relay-mode` will be `websocket-timeout` or `polling-timeout` |
+
+---
+
+## `POST /v1/sessions/{session_id}/execute-batch`
+
+Sends multiple capability commands to the node in a single relay call. The batch executes sequentially and stops on the first error by default, reducing round-trip overhead compared to individual execute calls.
+
+### Authentication
+
+Requires an **agent API key** as a bearer token.
+
+### Path parameter
+
+<ParamField path="session_id" type="string" required>
+  The opaque session identifier returned by `POST /v1/requests`.
+</ParamField>
+
+### Request body
+
+<ParamField body="commands" type="object[]" required>
+  Ordered list of capability execution requests. Each item in the array:
+
+  <Expandable title="command item fields">
+    <ParamField body="capability" type="string" required>
+      The capability name to invoke.
+    </ParamField>
+    <ParamField body="params" type="object">
+      Arguments for this capability, validated against its JSON Schema.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField body="timeout_ms" type="integer">
+  Total timeout for the entire batch in milliseconds. The relay timeout scales with batch size if not specified.
+</ParamField>
+
+### Example request
+
+```bash
+curl -X POST https://oahl.onrender.com/v1/sessions/sess-3f7a2c1d-.../execute-batch \
+  -H "Authorization: Bearer oahl_agent_abc123..." \
+  -H "Content-Type: application/json" \
+  -d '{
+    "commands": [
+      { "capability": "arm.move", "params": { "x": 10, "y": 5, "z": 0 } },
+      { "capability": "arm.close_gripper", "params": {} },
+      { "capability": "arm.move", "params": { "x": 0, "y": 0, "z": 10 } }
+    ],
+    "timeout_ms": 120000
+  }'
+```
+
+### Response
+
+**`200 OK`** — Batch execution result envelope.
+
+The response is an [ExecutionResult](/api/schemas/execution-result) envelope. The `data` field contains an array of sub-results, one per command in the batch.
+
+Response headers:
+
+| Header | Description |
+|--------|-------------|
+| `x-oahl-relay-mode` | Transport path used |
+| `x-oahl-request-id` | Opaque command batch identifier |
+
+```json
+{
+  "schema_version": "1.0",
+  "operation_id": "cmd-batch-9f1c3d",
+  "status": "success",
+  "completion": { "done": true, "state": "completed" },
+  "capability": "batch",
+  "device_id": "arm-01",
+  "timestamp": "2026-03-17T12:01:00.000Z",
+  "data": [
+    { "capability": "arm.move", "status": "success" },
+    { "capability": "arm.close_gripper", "status": "success" },
+    { "capability": "arm.move", "status": "success" }
+  ],
+  "error": null,
+  "meta": { "relay_latency_ms": 380, "node_id": "node-abc123" }
+}
+```
+
+### Error responses
+
+| Status | Condition |
+|--------|-----------|
+| `400 Bad Request` | `commands` field is missing or is not an array |
+| `404 Not Found` | Session does not exist |
+
+<Note>
+  The batch stops on the first error by default. Inspect the `data` array and `error` field to determine which command failed and why.
+</Note>
