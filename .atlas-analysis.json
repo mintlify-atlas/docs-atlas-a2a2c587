@@ -1,0 +1,154 @@
+{
+  "projectType": "framework",
+  "projectName": "Open Agent Hardware Layer (OAHL)",
+  "projectDescription": "An open-source framework that exposes real-world hardware capabilities to AI agents through standardized REST APIs, pluggable adapters, and a cloud relay registry.",
+  "theme": "aspen",
+  "primaryColor": "#040404",
+  "lightColor": null,
+  "darkColor": "#040404",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "architecture"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/nodes",
+              "concepts/adapters",
+              "concepts/capabilities",
+              "concepts/sessions",
+              "concepts/policies"
+            ]
+          },
+          {
+            "group": "Hardware Owner Guide",
+            "pages": [
+              "hardware-owners/setup",
+              "hardware-owners/configuration",
+              "hardware-owners/docker",
+              "hardware-owners/cloud-registry"
+            ]
+          },
+          {
+            "group": "Adapter Development",
+            "pages": [
+              "adapters/overview",
+              "adapters/implementing-adapter",
+              "adapters/scaffolding",
+              "adapters/publishing"
+            ]
+          },
+          {
+            "group": "Agent Integration",
+            "pages": [
+              "agents/overview",
+              "agents/direct-api",
+              "agents/tool-wrappers",
+              "agents/mcp-server",
+              "agents/identity-headers"
+            ]
+          },
+          {
+            "group": "SDKs",
+            "pages": [
+              "sdks/javascript",
+              "sdks/python"
+            ]
+          },
+          {
+            "group": "Security",
+            "pages": [
+              "security/overview",
+              "security/policies",
+              "security/transport"
+            ]
+          },
+          {
+            "group": "CLI Reference",
+            "pages": [
+              "cli/overview",
+              "cli/commands"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Overview",
+            "pages": [
+              "api/overview",
+              "api/authentication"
+            ]
+          },
+          {
+            "group": "Agent Endpoints",
+            "pages": [
+              "api/capabilities",
+              "api/sessions",
+              "api/execution"
+            ]
+          },
+          {
+            "group": "Provider Endpoints",
+            "pages": [
+              "api/provider-nodes",
+              "api/websocket"
+            ]
+          },
+          {
+            "group": "Schemas",
+            "pages": [
+              "api/schemas/execution-result",
+              "api/schemas/device-descriptor",
+              "api/schemas/capability-descriptor"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Standardized hardware capability API with dot-notation naming (e.g., camera.capture, radio.scan)",
+    "Pluggable adapter system for connecting any physical hardware device",
+    "Cloud relay registry for global hardware discovery and agent routing",
+    "Session-based exclusive hardware access with policy enforcement",
+    "Built-in MCP server for native LLM agent integration",
+    "CLI tooling with interactive TUI for node setup and management",
+    "Official JavaScript/TypeScript and Python SDKs",
+    "WebSocket fast-path relay with HTTP long-poll fallback",
+    "Docker-first deployment with device passthrough support",
+    "Adapter scaffolding and conformance testing tools"
+  ],
+  "publicApiSurface": [
+    "GET /v1/capabilities — Discover available hardware devices and capabilities",
+    "POST /v1/requests — Reserve a hardware session",
+    "POST /v1/sessions/{session_id}/execute — Execute a capability",
+    "POST /v1/sessions/{session_id}/execute-batch — Batch execute capabilities",
+    "POST /v1/sessions/{session_id}/stop — Release a session",
+    "POST /v1/provider/nodes/register — Register or heartbeat a node",
+    "GET /v1/provider/nodes/{id}/poll — Long-poll for pending commands",
+    "POST /v1/provider/nodes/results — Submit execution result",
+    "OahlClient — JavaScript SDK for direct local node interaction",
+    "CloudClient — JavaScript SDK for cloud relay interaction",
+    "oahl init — Interactive node setup wizard",
+    "oahl start — Start local OAHL node daemon",
+    "oahl install <adapter> — Install a hardware adapter plugin",
+    "oahl create-adapter <name> — Scaffold a new adapter package",
+    "oahl scan-ports — Detect connected USB/serial devices",
+    "oahl mcp — Start MCP server for agent integration",
+    "oahl tui — Terminal UI for node configuration",
+    "oahl conformance — Run adapter conformance checks",
+    "Adapter interface: initialize(), healthCheck(), getDevices(), getCapabilities(), execute()"
+  ]
+}
